@@ -16,77 +16,176 @@
             <div class="user">
                 <div class="avatar" id="avatar" aria-hidden="true"></div>
                 <div class="user-meta"><b id="userName"></b><span id="userRole"></span></div>
+                <button class="icon-btn" id="btnPw" title="تغيير كلمة المرور" aria-label="تغيير كلمة المرور"><svg class="i"><use href="#i-key"/></svg></button>
                 <button class="btn secondary sm" id="logout"><svg class="i"><use href="#i-log-out"/></svg>خروج</button>
             </div>
         </div>
+        <nav class="tabs" role="tablist" aria-label="الأقسام">
+            <button class="tab" role="tab" data-tab="me"><svg class="i"><use href="#i-clock"/></svg>لوحتي</button>
+            <button class="tab admin-only hidden" role="tab" data-tab="daily"><svg class="i"><use href="#i-calendar-check"/></svg>الحضور اليومي</button>
+            <button class="tab admin-only hidden" role="tab" data-tab="report"><svg class="i"><use href="#i-file-text"/></svg>التقارير</button>
+            <button class="tab admin-only hidden" role="tab" data-tab="users"><svg class="i"><use href="#i-users"/></svg>الموظفون</button>
+            <button class="tab admin-only hidden" role="tab" data-tab="settings"><svg class="i"><use href="#i-settings"/></svg>الإعدادات</button>
+        </nav>
     </header>
 
     <main>
-        <div class="hero-grid">
-            <section class="card clock-card" aria-label="تسجيل اليوم">
-                <div class="date" id="today"></div>
-                <div class="time" id="clock" aria-live="off"></div>
-                <div class="status" id="status" aria-live="polite"><svg class="i"><use href="#i-info"/></svg><span id="statusText"></span></div>
-                <div class="actions">
-                    <button class="btn lg in" id="btnIn"><svg class="i"><use href="#i-log-in"/></svg>تسجيل حضور</button>
-                    <button class="btn lg out" id="btnOut"><svg class="i"><use href="#i-log-out"/></svg>تسجيل انصراف</button>
-                </div>
-                <div class="alert" id="msg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="msgText"></span></div>
+        <!-- لوحتي -->
+        <div class="panel" data-panel="me">
+            <div class="hero-grid">
+                <section class="card clock-card" aria-label="تسجيل اليوم">
+                    <div class="date" id="today"></div>
+                    <div class="time" id="clock" aria-live="off"></div>
+                    <div class="status" id="status" aria-live="polite"><svg class="i"><use href="#i-info"/></svg><span id="statusText"></span></div>
+                    <div class="actions">
+                        <button class="btn lg in" id="btnIn"><svg class="i"><use href="#i-log-in"/></svg>تسجيل حضور</button>
+                        <button class="btn lg out" id="btnOut"><svg class="i"><use href="#i-log-out"/></svg>تسجيل انصراف</button>
+                    </div>
+                    <div class="alert" id="msg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="msgText"></span></div>
+                </section>
+
+                <section class="stats" aria-label="ملخص الشهر">
+                    <div class="card stat"><div class="ico"><svg class="i"><use href="#i-calendar-check"/></svg></div><div><b id="sDays">0</b><span>أيام الحضور في الشهر المحدد</span></div></div>
+                    <div class="card stat"><div class="ico warn"><svg class="i"><use href="#i-alert"/></svg></div><div><b id="sLate">0</b><span>مرات التأخير</span></div></div>
+                    <div class="card stat"><div class="ico gold"><svg class="i"><use href="#i-timer"/></svg></div><div><b id="sHours">0</b><span>ساعات العمل</span></div></div>
+                </section>
+            </div>
+
+            <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-chart"/></svg>ساعات العمل اليومية</h3></div>
+                <div id="chart"></div>
+                <div class="legend"><span><i style="background:var(--primary)"></i>في الوقت</span><span><i style="background:var(--warning)"></i>متأخر</span><span><i style="background:var(--accent)"></i>الهدف اليومي</span></div>
             </section>
 
-            <section class="stats" aria-label="ملخص الشهر">
-                <div class="card stat"><div class="ico"><svg class="i"><use href="#i-calendar-check"/></svg></div><div><b id="sDays">0</b><span>أيام الحضور في الشهر المحدد</span></div></div>
-                <div class="card stat"><div class="ico warn"><svg class="i"><use href="#i-alert"/></svg></div><div><b id="sLate">0</b><span>مرات التأخير</span></div></div>
-                <div class="card stat"><div class="ico gold"><svg class="i"><use href="#i-timer"/></svg></div><div><b id="sHours">0</b><span>ساعات العمل</span></div></div>
+            <section class="card">
+                <div class="card-head"><h3>سجلي</h3>
+                    <div class="field"><label for="myMonth">الشهر</label><input type="month" id="myMonth"></div>
+                </div>
+                <div class="table-wrap"><table>
+                    <thead><tr><th>التاريخ</th><th>الحضور</th><th>الانصراف</th><th>الساعات</th><th>الحالة</th></tr></thead>
+                    <tbody id="myBody"></tbody>
+                </table></div>
             </section>
         </div>
 
-        <section class="card">
-            <div class="card-head"><h3>سجلي</h3>
-                <div class="field"><label for="myMonth">الشهر</label><input type="month" id="myMonth"></div>
-            </div>
-            <div class="table-wrap"><table>
-                <thead><tr><th>التاريخ</th><th>الحضور</th><th>الانصراف</th><th>الساعات</th><th>الحالة</th></tr></thead>
-                <tbody id="myBody"></tbody>
-            </table></div>
-        </section>
-
-        <section class="card hidden" id="adminPanel">
-            <div class="card-head"><h3><svg class="i"><use href="#i-users"/></svg>سجل جميع الموظفين</h3>
-                <div class="field"><label for="adminDate">اليوم</label><input type="date" id="adminDate"></div>
-                <button class="btn secondary" id="exportCsv"><svg class="i"><use href="#i-download"/></svg>تصدير CSV</button>
-            </div>
-            <div class="table-wrap"><table>
-                <thead><tr><th>الموظف</th><th>الحضور</th><th>الانصراف</th><th>الساعات</th><th>الحالة</th></tr></thead>
-                <tbody id="adminBody"></tbody>
-            </table></div>
-        </section>
-
-        <section class="card hidden" id="dbPanel">
-            <div class="card-head"><h3><svg class="i"><use href="#i-database"/></svg>قاعدة البيانات</h3></div>
-            <p class="card-note">قاعدة SQLite محفوظة في هذا المتصفح. صدّرها كملف <b>.sqlite</b> للنسخ الاحتياطي أو لنقلها إلى جهاز آخر.</p>
-            <div class="row">
-                <button class="btn secondary" id="exportDb"><svg class="i"><use href="#i-download"/></svg>تصدير قاعدة البيانات</button>
-                <div class="field"><label for="importDb">استيراد قاعدة بيانات</label><input type="file" id="importDb" accept=".sqlite,.db"></div>
-            </div>
-            <div class="alert" id="dbMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="dbMsgText"></span></div>
-        </section>
-
-        <section class="card hidden" id="addUserPanel">
-            <div class="card-head"><h3><svg class="i"><use href="#i-user-plus"/></svg>إضافة مستخدم</h3></div>
-            <form id="userForm">
-                <div class="form-grid">
-                    <div class="field"><label for="uName">الاسم</label><input id="uName" required></div>
-                    <div class="field"><label for="uUser">اسم المستخدم</label><input id="uUser" dir="ltr" required></div>
-                    <div class="field"><label for="uPass">كلمة المرور</label><input id="uPass" dir="ltr" type="password" minlength="6" required></div>
-                    <div class="field"><label for="uRole">الدور</label>
-                        <select id="uRole"><option value="employee">موظف</option><option value="admin">مدير</option></select></div>
-                    <button class="btn" type="submit"><svg class="i"><use href="#i-user-plus"/></svg>إضافة</button>
+        <!-- الحضور اليومي (مدير) -->
+        <div class="panel hidden" data-panel="daily">
+            <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-users"/></svg>سجل جميع الموظفين</h3>
+                    <div class="field"><label for="adminDate">اليوم</label><input type="date" id="adminDate"></div>
+                    <button class="btn" id="addRecord"><svg class="i"><use href="#i-plus"/></svg>إضافة سجل</button>
+                    <button class="btn secondary" id="exportCsv"><svg class="i"><use href="#i-download"/></svg>تصدير CSV</button>
                 </div>
-            </form>
-            <div class="alert" id="userMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="userMsgText"></span></div>
-        </section>
+                <div class="table-wrap"><table>
+                    <thead><tr><th>الموظف</th><th>الحضور</th><th>الانصراف</th><th>الساعات</th><th>الحالة</th><th class="no-print"></th></tr></thead>
+                    <tbody id="adminBody"></tbody>
+                </table></div>
+            </section>
+        </div>
+
+        <!-- التقارير (مدير) -->
+        <div class="panel hidden" data-panel="report">
+            <section class="card">
+                <div class="print-title" id="reportTitle"></div>
+                <div class="card-head"><h3><svg class="i"><use href="#i-file-text"/></svg>التقرير الشهري</h3>
+                    <div class="field"><label for="reportMonth">الشهر</label><input type="month" id="reportMonth"></div>
+                    <button class="btn secondary" id="printReport"><svg class="i"><use href="#i-printer"/></svg>طباعة</button>
+                    <button class="btn secondary" id="exportReport"><svg class="i"><use href="#i-download"/></svg>تصدير CSV</button>
+                </div>
+                <p class="card-note" id="reportNote"></p>
+                <div class="table-wrap"><table>
+                    <thead><tr><th>الموظف</th><th>أيام الدوام</th><th>الحضور</th><th>الغياب</th><th>التأخير</th><th>ساعات العمل</th></tr></thead>
+                    <tbody id="reportBody"></tbody>
+                </table></div>
+            </section>
+        </div>
+
+        <!-- الموظفون (مدير) -->
+        <div class="panel hidden" data-panel="users">
+            <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-users"/></svg>الموظفون</h3></div>
+                <div class="table-wrap"><table>
+                    <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الدور</th><th>الحالة</th><th></th></tr></thead>
+                    <tbody id="usersBody"></tbody>
+                </table></div>
+                <div class="alert" id="usersMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="usersMsgText"></span></div>
+            </section>
+            <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-user-plus"/></svg>إضافة مستخدم</h3></div>
+                <form id="userForm">
+                    <div class="form-grid">
+                        <div class="field"><label for="uName">الاسم</label><input id="uName" required></div>
+                        <div class="field"><label for="uUser">اسم المستخدم</label><input id="uUser" dir="ltr" required></div>
+                        <div class="field"><label for="uPass">كلمة المرور (6 أحرف فأكثر)</label><input id="uPass" dir="ltr" type="password" minlength="6" required></div>
+                        <div class="field"><label for="uRole">الدور</label>
+                            <select id="uRole"><option value="employee">موظف</option><option value="admin">مدير</option></select></div>
+                        <button class="btn" type="submit"><svg class="i"><use href="#i-user-plus"/></svg>إضافة</button>
+                    </div>
+                </form>
+                <div class="alert" id="userMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="userMsgText"></span></div>
+            </section>
+        </div>
+
+        <!-- الإعدادات (مدير) -->
+        <div class="panel hidden" data-panel="settings">
+            <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-settings"/></svg>إعدادات الدوام</h3></div>
+                <form id="settingsForm">
+                    <div class="form-grid">
+                        <div class="field"><label for="setStart">بداية الدوام</label><input type="time" id="setStart" required></div>
+                        <div class="field"><label for="setEnd">نهاية الدوام</label><input type="time" id="setEnd" required></div>
+                        <div class="field"><label for="setGrace">مهلة التأخير (دقائق)</label><input type="number" id="setGrace" min="0" max="120" required></div>
+                    </div>
+                    <div class="field" style="margin-top:16px"><label>أيام الإجازة الأسبوعية</label><div class="weekdays" id="setWeekend"></div></div>
+                    <button class="btn" type="submit"><svg class="i"><use href="#i-check"/></svg>حفظ الإعدادات</button>
+                </form>
+                <div class="alert" id="setMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="setMsgText"></span></div>
+                <div class="success" id="setOk" role="status"><svg class="i"><use href="#i-check"/></svg>تم حفظ الإعدادات</div>
+            </section>
+
+            <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-database"/></svg>قاعدة البيانات</h3></div>
+                <p class="card-note">قاعدة SQLite محفوظة في هذا المتصفح. صدّرها كملف <b>.sqlite</b> للنسخ الاحتياطي أو لنقلها إلى جهاز آخر.</p>
+                <div class="row">
+                    <button class="btn secondary" id="exportDb"><svg class="i"><use href="#i-download"/></svg>تصدير قاعدة البيانات</button>
+                    <div class="field"><label for="importDb">استيراد قاعدة بيانات</label><input type="file" id="importDb" accept=".sqlite,.db"></div>
+                </div>
+                <div class="alert" id="dbMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="dbMsgText"></span></div>
+            </section>
+        </div>
     </main>
+
+    <!-- نافذة تعديل/إضافة سجل -->
+    <dialog id="recDialog" aria-labelledby="recTitle">
+        <form method="dialog" id="recForm">
+            <h3 id="recTitle">سجل حضور</h3>
+            <div class="field"><label for="recUser">الموظف</label><select id="recUser" required></select></div>
+            <div class="field"><label for="recDate">التاريخ</label><input type="date" id="recDate" required></div>
+            <div class="form-grid">
+                <div class="field"><label for="recIn">الحضور</label><input type="time" id="recIn" required></div>
+                <div class="field"><label for="recOut">الانصراف (اختياري)</label><input type="time" id="recOut"></div>
+            </div>
+            <div class="alert" id="recMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="recMsgText"></span></div>
+            <div class="dialog-actions">
+                <button type="button" class="btn secondary" id="recCancel">إلغاء</button>
+                <button type="submit" class="btn">حفظ</button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- نافذة كلمة المرور -->
+    <dialog id="pwDialog" aria-labelledby="pwTitle">
+        <form method="dialog" id="pwForm">
+            <h3 id="pwTitle">تغيير كلمة المرور</h3>
+            <div class="field" id="pwOldWrap"><label for="pwOld">كلمة المرور الحالية</label><input type="password" id="pwOld" dir="ltr" autocomplete="current-password"></div>
+            <div class="field"><label for="pwNew">كلمة المرور الجديدة (6 أحرف فأكثر)</label><input type="password" id="pwNew" dir="ltr" autocomplete="new-password" minlength="6" required></div>
+            <div class="alert" id="pwMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="pwMsgText"></span></div>
+            <div class="dialog-actions">
+                <button type="button" class="btn secondary" id="pwCancel">إلغاء</button>
+                <button type="submit" class="btn">حفظ</button>
+            </div>
+        </form>
+    </dialog>
 
     <script src="js/icons.js"></script>
     <script src="js/vendor/sql-wasm.js"></script>
