@@ -1,7 +1,5 @@
-const me = Store.currentUser();
-if (!me) location.replace('login.html');
-
 const $ = id => document.getElementById(id);
+let me = null;
 const fmtTime = iso => iso ? new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '—';
 const fmtHours = h => h ? h.toFixed(2) : '—';
 
@@ -57,13 +55,15 @@ function renderAdmin() {
 
 function refresh() { renderToday(); renderMine(); if (me.role === 'admin') renderAdmin(); }
 
-function act(fn) {
+async function act(fn) {
   $('msg').style.display = 'none';
-  try { fn(me.id); } catch (e) { $('msg').textContent = e.message; $('msg').style.display = 'block'; }
+  try { await fn(me.id); } catch (e) { $('msg').textContent = e.message; $('msg').style.display = 'block'; }
   refresh();
 }
 
-if (me) {
+function init() {
+  me = Store.currentUser();
+  if (!me) return location.replace('login.html');
   $('userName').textContent = me.name;
   $('logout').onclick = () => { Store.logout(); location.replace('login.html'); };
   $('btnIn').onclick = () => act(id => Store.checkIn(id));
@@ -90,10 +90,28 @@ if (me) {
       a.href = URL.createObjectURL(blob); a.download = `attendance-${$('adminDate').value}.csv`; a.click();
       URL.revokeObjectURL(a.href);
     };
-    $('userForm').onsubmit = e => {
+    $('dbPanel').classList.remove('hidden');
+    $('exportDb').onclick = () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(Store.exportDb());
+      a.download = `attendance-${Store.dateKey(new Date())}.sqlite`; a.click();
+      URL.revokeObjectURL(a.href);
+    };
+    $('importDb').onchange = async e => {
+      const file = e.target.files[0]; if (!file) return;
+      $('dbMsg').style.display = 'none';
+      if (!confirm('سيتم استبدال كل البيانات الحالية بمحتوى الملف. هل أنت متأكد؟')) { e.target.value = ''; return; }
+      try {
+        await Store.importDb(file);
+        if (!Store.currentUser()) { Store.logout(); return location.replace('login.html'); }
+        me = Store.currentUser(); refresh();
+      } catch (err) { $('dbMsg').textContent = err.message; $('dbMsg').style.display = 'block'; }
+      e.target.value = '';
+    };
+    $('userForm').onsubmit = async e => {
       e.preventDefault();
       try {
-        Store.addUser({ name: $('uName').value.trim(), username: $('uUser').value.trim(), password: $('uPass').value, role: $('uRole').value });
+        await Store.addUser({ name: $('uName').value.trim(), username: $('uUser').value.trim(), password: $('uPass').value, role: $('uRole').value });
         e.target.reset(); $('userMsg').style.display = 'none';
       } catch (err) { $('userMsg').textContent = err.message; $('userMsg').style.display = 'block'; }
     };
@@ -101,3 +119,5 @@ if (me) {
   tickClock(); setInterval(tickClock, 1000);
   refresh();
 }
+
+Store.ready.then(init).catch(() => { document.body.textContent = 'تعذر تحميل قاعدة البيانات'; });

@@ -51,6 +51,16 @@
             </table></div>
         </section>
 
+        <section class="card hidden" id="dbPanel">
+            <h3 style="margin-bottom:6px">قاعدة البيانات</h3>
+            <p class="hint" style="text-align:start;margin:0 0 14px">قاعدة SQLite محفوظة في هذا المتصفح. صدّرها كملف <b>.sqlite</b> للنسخ الاحتياطي أو لنقلها إلى جهاز آخر.</p>
+            <div class="toolbar">
+                <button class="btn" id="exportDb">تصدير قاعدة البيانات</button>
+                <div class="field"><label for="importDb">استيراد قاعدة بيانات</label><input type="file" id="importDb" accept=".sqlite,.db"></div>
+            </div>
+            <div class="error-message" id="dbMsg"></div>
+        </section>
+
         <section class="card hidden" id="addUserPanel">
             <h3 style="margin-bottom:14px">إضافة مستخدم</h3>
             <form id="userForm" class="toolbar">
@@ -65,6 +75,7 @@
         </section>
     </main>
 
+    <script src="js/vendor/sql-wasm.js"></script>
     <script src="js/store.js"></script>
     <script src="js/app.js"></script>
 </body>
