@@ -55,13 +55,16 @@ const Store = (() => {
       password TEXT NOT NULL,
       name TEXT NOT NULL,
       role TEXT NOT NULL CHECK (role IN ('admin','employee')),
-      active INTEGER NOT NULL DEFAULT 1);
+      active INTEGER NOT NULL DEFAULT 1,
+      can_edit INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS records (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id),
       date TEXT NOT NULL,
       check_in TEXT NOT NULL,
       check_out TEXT,
+      edited_by TEXT,
+      edited_at TEXT,
       UNIQUE (user_id, date));
     CREATE INDEX IF NOT EXISTS idx_records_date ON records(date);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`;
@@ -70,7 +73,12 @@ const Store = (() => {
   function ensureSchema() {
     db.exec(SCHEMA);
     // ترقية قواعد قديمة: عمود active
-    if (!all('PRAGMA table_info(users)').some(c => c.name === 'active')) db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+    // ترقية قواعد قديمة: أعمدة ناقصة تُضاف تلقائياً
+    const addCol = (table, col, ddl) => { if (!all(`PRAGMA table_info(${table})`).some(c => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`); };
+    addCol('users', 'active', 'INTEGER NOT NULL DEFAULT 1');
+    addCol('users', 'can_edit', 'INTEGER NOT NULL DEFAULT 0');
+    addCol('records', 'edited_by', 'TEXT');
+    addCol('records', 'edited_at', 'TEXT');
     cfg = { ...DEFAULTS };
     all('SELECT key, value FROM settings').forEach(r => { if (r.key in DEFAULTS) cfg[r.key] = r.value; });
   }
@@ -97,7 +105,7 @@ const Store = (() => {
       recs = [];
     }
     for (const u of users) run('INSERT OR IGNORE INTO users (id, username, password, name, role) VALUES (?,?,?,?,?)', [u.id, u.username, await hashPw(u.password), u.name, u.role]);
-    recs.forEach(r => run('INSERT OR IGNORE INTO records VALUES (?,?,?,?,?)', [r.id, r.userId, r.date, r.checkIn, r.checkOut || null]));
+    recs.forEach(r => run('INSERT OR IGNORE INTO records (id, user_id, date, check_in, check_out) VALUES (?,?,?,?,?)', [r.id, r.userId, r.date, r.checkIn, r.checkOut || null]));
     localStorage.removeItem('att_users'); localStorage.removeItem('att_records');
   }
 
@@ -110,10 +118,15 @@ const Store = (() => {
     await persist(); // يحفظ أيضاً أي ترقية للمخطط
   })();
 
-  const REC = 'SELECT id, user_id AS userId, date, check_in AS checkIn, check_out AS checkOut FROM records';
-  const USER = 'SELECT id, username, name, role, active FROM users';
+  const REC = 'SELECT id, user_id AS userId, date, check_in AS checkIn, check_out AS checkOut, edited_by AS editedBy, edited_at AS editedAt FROM records';
+  const USER = 'SELECT id, username, name, role, active, can_edit AS canEdit FROM users';
   const activeAdmins = () => all("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1")[0].n;
   const need = (cond, msg) => { if (!cond) throw new Error(msg); };
+  // الصلاحيات: المدير يملك كل شيء، وغيره يملك ما مُنح له فقط
+  const isAdmin = u => !!u && u.role === 'admin';
+  const canEditAttendance = u => !!u && (u.role === 'admin' || u.canEdit === 1);
+  const ADMIN_ONLY = 'هذه العملية للمدير فقط';
+  const NO_EDIT = 'ليست لديك صلاحية تعديل الحضور';
   const checkPw = pw => need(pw && pw.length >= 6, 'كلمة المرور يجب ألا تقل عن 6 أحرف');
   const localISO = (date, hhmm) => { const [y, m, d] = date.split('-').map(Number), [h, mi] = hhmm.split(':').map(Number); return new Date(y, m - 1, d, h, mi).toISOString(); };
 
@@ -122,6 +135,7 @@ const Store = (() => {
     get settings() { return { ...cfg }; },
     isWeekend(date) { return cfg.weekend.split(',').filter(Boolean).map(Number).includes(new Date(date + 'T00:00:00').getDay()); },
     saveSettings(next) {
+      need(isAdmin(this.currentUser()), ADMIN_ONLY);
       need(/^\d\d:\d\d$/.test(next.workStart) && /^\d\d:\d\d$/.test(next.workEnd), 'أدخل وقت دوام صحيحاً');
       need(toMin(next.workEnd) > toMin(next.workStart), 'وقت نهاية الدوام يجب أن يكون بعد وقت البداية');
       const grace = Number(next.graceMin);
@@ -150,6 +164,7 @@ const Store = (() => {
       return id ? all(`${USER} WHERE id = ? AND active = 1`, [id])[0] || null : null;
     },
     async addUser({ name, username, password, role }) {
+      need(isAdmin(this.currentUser()), ADMIN_ONLY);
       need(name && username, 'الاسم واسم المستخدم مطلوبان');
       checkPw(password);
       need(!all('SELECT 1 FROM users WHERE username = ?', [username])[0], 'اسم المستخدم موجود مسبقاً');
@@ -157,6 +172,8 @@ const Store = (() => {
       return persist();
     },
     async setPassword(userId, password) {
+      const me = this.currentUser();
+      need(isAdmin(me) || (me && me.id === userId), ADMIN_ONLY);
       checkPw(password);
       run('UPDATE users SET password = ? WHERE id = ?', [await hashPw(password), userId]);
       return persist();
@@ -167,6 +184,7 @@ const Store = (() => {
       return this.setPassword(userId, newPw);
     },
     setActive(userId, active) {
+      need(isAdmin(this.currentUser()), ADMIN_ONLY);
       const u = all(`${USER} WHERE id = ?`, [userId])[0];
       need(u, 'المستخدم غير موجود');
       if (!active) {
@@ -177,12 +195,23 @@ const Store = (() => {
       return persist();
     },
 
+    // منح/سحب صلاحية تعديل الحضور (المدير يملكها دائماً)
+    setCanEdit(userId, allowed) {
+      need(isAdmin(this.currentUser()), ADMIN_ONLY);
+      const u = all(`${USER} WHERE id = ?`, [userId])[0];
+      need(u, 'المستخدم غير موجود');
+      need(u.role !== 'admin', 'المدير يملك هذه الصلاحية دائماً');
+      run('UPDATE users SET can_edit = ? WHERE id = ?', [allowed ? 1 : 0, userId]);
+      return persist();
+    },
+    canEditAttendance,
+
     // ---------- الحضور ----------
     todayRecord: userId => all(`${REC} WHERE user_id = ? AND date = ?`, [userId, dateKey(new Date())])[0] || null,
     checkIn(userId) {
       need(!this.todayRecord(userId), 'تم تسجيل الحضور اليوم مسبقاً');
       const now = new Date();
-      run('INSERT INTO records VALUES (?,?,?,?,NULL)', [uid(), userId, dateKey(now), now.toISOString()]);
+      run('INSERT INTO records (id, user_id, date, check_in) VALUES (?,?,?,?)', [uid(), userId, dateKey(now), now.toISOString()]);
       return persist();
     },
     checkOut(userId) {
@@ -194,19 +223,32 @@ const Store = (() => {
     },
     recordsFor: (userId, month) => all(`${REC} WHERE user_id = ? AND date LIKE ? ORDER BY date DESC`, [userId, (month || '') + '%']),
     recordsOn: date => all(`${REC} WHERE date = ? ORDER BY check_in`, [date]),
-    // تعديل/إضافة يدوية (للمدير): checkIn/checkOut بصيغة HH:MM
+    // تعديل/إضافة يدوية لمن يملك الصلاحية: checkIn/checkOut بصيغة HH:MM
+    // غير المدير لا يعدّل سجلاته الشخصية (فصل المسؤوليات)، وكل تعديل يُسجَّل باسم صاحبه
     saveRecord({ id, userId, date, checkIn, checkOut }) {
+      const actor = this.currentUser();
+      need(canEditAttendance(actor), NO_EDIT);
+      const existing = id ? all('SELECT user_id FROM records WHERE id = ?', [id])[0] : null;
+      need(isAdmin(actor) || (userId !== actor.id && existing?.user_id !== actor.id), 'لا يمكنك تعديل سجلاتك الشخصية');
+      const stamp = new Date().toISOString();
       need(userId && /^\d{4}-\d\d-\d\d$/.test(date), 'اختر الموظف والتاريخ');
       need(/^\d\d:\d\d$/.test(checkIn), 'أدخل وقت الحضور');
       const cin = localISO(date, checkIn), cout = checkOut ? localISO(date, checkOut) : null;
       need(!cout || cout > cin, 'وقت الانصراف يجب أن يكون بعد وقت الحضور');
       const dup = all('SELECT id FROM records WHERE user_id = ? AND date = ?', [userId, date])[0];
       need(!dup || dup.id === id, 'يوجد سجل لهذا الموظف في هذا التاريخ');
-      if (id) run('UPDATE records SET user_id = ?, date = ?, check_in = ?, check_out = ? WHERE id = ?', [userId, date, cin, cout, id]);
-      else run('INSERT INTO records VALUES (?,?,?,?,?)', [uid(), userId, date, cin, cout]);
+      if (id) run('UPDATE records SET user_id = ?, date = ?, check_in = ?, check_out = ?, edited_by = ?, edited_at = ? WHERE id = ?', [userId, date, cin, cout, actor.id, stamp, id]);
+      else run('INSERT INTO records (id, user_id, date, check_in, check_out, edited_by, edited_at) VALUES (?,?,?,?,?,?,?)', [uid(), userId, date, cin, cout, actor.id, stamp]);
       return persist();
     },
-    deleteRecord(id) { run('DELETE FROM records WHERE id = ?', [id]); return persist(); },
+    deleteRecord(id) {
+      const actor = this.currentUser();
+      need(canEditAttendance(actor), NO_EDIT);
+      const r = all('SELECT user_id FROM records WHERE id = ?', [id])[0];
+      need(r, 'السجل غير موجود');
+      need(isAdmin(actor) || r.user_id !== actor.id, 'لا يمكنك تعديل سجلاتك الشخصية');
+      run('DELETE FROM records WHERE id = ?', [id]); return persist();
+    },
 
     isLate(rec) {
       const d = new Date(rec.checkIn);

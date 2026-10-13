@@ -22,7 +22,7 @@
         </div>
         <nav class="tabs" role="tablist" aria-label="الأقسام">
             <button class="tab" role="tab" data-tab="me"><svg class="i"><use href="#i-clock"/></svg>لوحتي</button>
-            <button class="tab admin-only hidden" role="tab" data-tab="daily"><svg class="i"><use href="#i-calendar-check"/></svg>الحضور اليومي</button>
+            <button class="tab edit-only hidden" role="tab" data-tab="daily"><svg class="i"><use href="#i-calendar-check"/></svg>الحضور اليومي</button>
             <button class="tab admin-only hidden" role="tab" data-tab="report"><svg class="i"><use href="#i-file-text"/></svg>التقارير</button>
             <button class="tab admin-only hidden" role="tab" data-tab="users"><svg class="i"><use href="#i-users"/></svg>الموظفون</button>
             <button class="tab admin-only hidden" role="tab" data-tab="settings"><svg class="i"><use href="#i-settings"/></svg>الإعدادات</button>
@@ -105,7 +105,7 @@
             <section class="card">
                 <div class="card-head"><h3><svg class="i"><use href="#i-users"/></svg>الموظفون</h3></div>
                 <div class="table-wrap"><table>
-                    <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الدور</th><th>الحالة</th><th></th></tr></thead>
+                    <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الدور</th><th>الحالة</th><th>تعديل الحضور</th><th></th></tr></thead>
                     <tbody id="usersBody"></tbody>
                 </table></div>
                 <div class="alert" id="usersMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="usersMsgText"></span></div>
