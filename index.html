@@ -123,6 +123,7 @@
                     <tbody id="hrBody"></tbody>
                 </table></div>
                 <div class="alert" id="hrMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="hrMsgText"></span></div>
+                <div class="success" id="hrOk" role="status"><svg class="i"><use href="#i-check"/></svg><span id="hrOkText"></span></div>
             </section>
         </div>
 
@@ -316,7 +317,7 @@
 
             <h4 class="sec-title">البيانات الوظيفية</h4>
             <div class="form-grid">
-                <div class="field"><label for="e_empNo">رقم الموظف</label><input id="e_empNo" data-f="empNo" dir="ltr" placeholder="يُولَّد تلقائياً"></div>
+                <div class="field"><label for="e_empNo">رقم الموظف (تلقائي)</label><input id="e_empNo" dir="ltr" disabled></div>
                 <div class="field"><label for="e_departmentId">القسم</label><select id="e_departmentId" data-f="departmentId"></select></div>
                 <div class="field"><label for="e_jobTitleId">المسمى الوظيفي</label><select id="e_jobTitleId" data-f="jobTitleId"></select></div>
                 <div class="field"><label for="e_empType">نوع التوظيف</label><select id="e_empType" data-f="empType"><option value="">—</option><option>دوام كامل</option><option>دوام جزئي</option><option>عقد</option><option>متدرب</option></select></div>
@@ -330,6 +331,8 @@
             <div class="form-grid">
                 <div class="field span2"><label for="e_userId">حساب الدخول المرتبط بهذا الموظف</label><select id="e_userId" data-f="userId"></select></div>
             </div>
+            <label class="check" id="e_createWrap"><input type="checkbox" id="e_createAccount"> إنشاء حساب دخول تلقائياً بهذا الاسم</label>
+            <div class="hint-line" id="e_accHint">اسم المستخدم وكلمة المرور المؤقتة = رقم الهوية، ويُطلب من الموظف تغييرها عند أول دخول.</div>
             <div class="att-summary hidden" id="empAtt" aria-live="polite"></div>
 
             <h4 class="sec-title">التسلسل الإداري</h4>
@@ -402,13 +405,28 @@
         </form>
     </dialog>
 
+    <!-- تغيير كلمة المرور المؤقتة عند أول دخول (لا يمكن إغلاقها) -->
+    <dialog id="firstDialog" aria-labelledby="firstTitle">
+        <form method="dialog" id="firstForm" novalidate>
+            <h3 id="firstTitle">مرحباً بك، غيّر كلمة المرور</h3>
+            <p class="card-note">هذه أول مرة تدخل فيها بكلمة مرور مؤقتة. اختر كلمة مرور جديدة تعرفها أنت وحدك للمتابعة.</p>
+            <div class="field"><label for="fpNew">كلمة المرور الجديدة (6 أحرف فأكثر)</label><input type="password" id="fpNew" dir="ltr" autocomplete="new-password"></div>
+            <div class="field"><label for="fpConfirm">تأكيد كلمة المرور</label><input type="password" id="fpConfirm" dir="ltr" autocomplete="new-password"></div>
+            <div class="alert" id="firstMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="firstMsgText"></span></div>
+            <div class="dialog-actions">
+                <button type="button" class="btn secondary" id="firstLogout">خروج</button>
+                <button type="submit" class="btn">حفظ والمتابعة</button>
+            </div>
+        </form>
+    </dialog>
+
     <!-- نافذة العقد -->
     <dialog id="contractDialog" class="wide" aria-labelledby="contractTitle">
         <form method="dialog" id="contractForm" novalidate>
             <h3 id="contractTitle">إضافة عقد</h3>
             <div class="form-grid">
                 <div class="field span2"><label for="c_employeeId">الموظف *</label><select id="c_employeeId" data-c="employeeId"></select></div>
-                <div class="field"><label for="c_contractNo">رقم العقد</label><input id="c_contractNo" data-c="contractNo" dir="ltr" placeholder="يُولَّد تلقائياً"></div>
+                <div class="field"><label for="c_contractNo">رقم العقد (تلقائي)</label><input id="c_contractNo" dir="ltr" disabled></div>
                 <div class="field"><label for="c_payBasis">نوع الأجر *</label><select id="c_payBasis" data-c="payBasis"></select></div>
                 <div class="field"><label for="c_type">مدة العقد *</label><select id="c_type" data-c="type"></select></div>
                 <div class="field"><label for="c_startDate">تاريخ البداية *</label><input type="date" id="c_startDate" data-c="startDate"></div>
@@ -453,6 +471,7 @@
             <h3 id="pwTitle">تغيير كلمة المرور</h3>
             <div class="field" id="pwOldWrap"><label for="pwOld">كلمة المرور الحالية</label><input type="password" id="pwOld" dir="ltr" autocomplete="current-password"></div>
             <div class="field"><label for="pwNew">كلمة المرور الجديدة (6 أحرف فأكثر)</label><input type="password" id="pwNew" dir="ltr" autocomplete="new-password" minlength="6" required></div>
+            <div class="hint-line" id="pwHint"></div>
             <div class="alert" id="pwMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="pwMsgText"></span></div>
             <div class="dialog-actions">
                 <button type="button" class="btn secondary" id="pwCancel">إلغاء</button>

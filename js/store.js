@@ -57,7 +57,8 @@ const Store = (() => {
       role TEXT NOT NULL CHECK (role IN ('admin','employee')),
       active INTEGER NOT NULL DEFAULT 1,
       can_edit INTEGER NOT NULL DEFAULT 0,
-      can_hr INTEGER NOT NULL DEFAULT 0);
+      can_hr INTEGER NOT NULL DEFAULT 0,
+      must_change INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS records (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id),
@@ -130,6 +131,7 @@ const Store = (() => {
     addCol('records', 'edited_by', 'TEXT');
     addCol('records', 'edited_at', 'TEXT');
     addCol('users', 'can_hr', 'INTEGER NOT NULL DEFAULT 0');
+    addCol('users', 'must_change', 'INTEGER NOT NULL DEFAULT 0');
     addCol('employees', 'user_id', 'TEXT');
     addCol('employees', 'department_id', 'TEXT');
     addCol('employees', 'job_title_id', 'TEXT');
@@ -177,13 +179,22 @@ const Store = (() => {
   })();
 
   const REC = 'SELECT id, user_id AS userId, date, check_in AS checkIn, check_out AS checkOut, edited_by AS editedBy, edited_at AS editedAt FROM records';
-  const USER = 'SELECT id, username, name, role, active, can_edit AS canEdit, can_hr AS canHr FROM users';
+  const USER = 'SELECT id, username, name, role, active, can_edit AS canEdit, can_hr AS canHr, must_change AS mustChange FROM users';
   const activeAdmins = () => all("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1")[0].n;
   const need = (cond, msg) => { if (!cond) throw new Error(msg); };
   // الصلاحيات: المدير يملك كل شيء، وغيره يملك ما مُنح له فقط
-  const isAdmin = u => !!u && u.role === 'admin';
-  const canEditAttendance = u => !!u && (u.role === 'admin' || u.canEdit === 1);
-  const canHr = u => !!u && (u.role === 'admin' || u.canHr === 1); // مسؤول موارد بشرية
+  // حساب ينتظر تغيير كلمة مروره المؤقتة لا يملك أي صلاحية حتى يغيّرها
+  const isAdmin = u => !!u && !u.mustChange && u.role === 'admin';
+  const canEditAttendance = u => !!u && !u.mustChange && (u.role === 'admin' || u.canEdit === 1);
+  const canHr = u => !!u && !u.mustChange && (u.role === 'admin' || u.canHr === 1); // مسؤول موارد بشرية
+  const MUST_CHANGE = 'يجب تغيير كلمة المرور المؤقتة أولاً';
+  // ترقيم تلقائي تصاعدي لا يعيد استخدام رقم محذوف (العدّاد محفوظ في الإعدادات)
+  const seqNext = (key, table, col) => {
+    const cur = Number(all('SELECT value FROM settings WHERE key = ?', [key])[0]?.value || 0);
+    const max = all(`SELECT ${col} AS c FROM ${table}`).reduce((m, r) => Math.max(m, Number((String(r.c).match(/\d+$/) || [0])[0])), 0);
+    return Math.max(cur, max) + 1;
+  };
+  const seqCommit = (key, n) => run('INSERT OR REPLACE INTO settings VALUES (?,?)', [key, String(n)]);
   const NO_HR = 'ليست لديك صلاحية الموارد البشرية';
   const CONTRACT = `SELECT id, contract_no AS contractNo, employee_id AS employeeId, type, pay_basis AS payBasis, start_date AS startDate, end_date AS endDate,
     basic_salary AS basicSalary, allowances, job_title AS jobTitle, status, notes FROM contracts`;
@@ -241,14 +252,25 @@ const Store = (() => {
       need(name && username, 'الاسم واسم المستخدم مطلوبان');
       checkPw(password);
       need(!all('SELECT 1 FROM users WHERE username = ?', [username])[0], 'اسم المستخدم موجود مسبقاً');
-      run('INSERT INTO users (id, username, password, name, role) VALUES (?,?,?,?,?)', [uid(), username, await hashPw(password), name, role]);
+      run('INSERT INTO users (id, username, password, name, role, must_change) VALUES (?,?,?,?,?,1)', [uid(), username, await hashPw(password), name, role]); // كلمة المرور من المدير: تُغيَّر عند أول دخول
       return persist();
     },
     async setPassword(userId, password) {
       const me = this.currentUser();
       need(isAdmin(me) || (me && me.id === userId), ADMIN_ONLY);
       checkPw(password);
-      run('UPDATE users SET password = ? WHERE id = ?', [await hashPw(password), userId]);
+      const mustChange = me.id !== userId ? 1 : 0; // إعادة التعيين بواسطة المدير تتطلب تغييرها عند الدخول التالي
+      run('UPDATE users SET password = ?, must_change = ? WHERE id = ?', [await hashPw(password), mustChange, userId]);
+      return persist();
+    },
+    // تغيير كلمة المرور المؤقتة عند أول دخول
+    async completeFirstLogin(newPw) {
+      const me = this.currentUser();
+      need(me && me.mustChange, 'لا يلزم تغيير كلمة المرور');
+      checkPw(newPw);
+      const row = all('SELECT password FROM users WHERE id = ?', [me.id])[0];
+      need(!(await verifyPw(newPw, row.password)).ok, 'اختر كلمة مرور مختلفة عن المؤقتة');
+      run('UPDATE users SET password = ?, must_change = 0 WHERE id = ?', [await hashPw(newPw), me.id]);
       return persist();
     },
     async changeOwnPassword(userId, oldPw, newPw) {
@@ -276,11 +298,9 @@ const Store = (() => {
       if (!me || (me.id !== userId && !canHr(me))) return null;
       return all(`${EMP} WHERE user_id = ?`, [userId])[0] || null;
     },
-    nextEmpNo() {
-      const max = all('SELECT emp_no FROM employees').reduce((m, r) => Math.max(m, Number((r.emp_no.match(/\d+$/) || [0])[0])), 0);
-      return 'EMP-' + String(max + 1).padStart(4, '0');
-    },
-    saveEmployee(e) {
+    nextEmpNo: () => 'EMP-' + String(seqNext('seq_employees', 'employees', 'emp_no')).padStart(4, '0'),
+    // يعيد { accountCreated: اسم المستخدم } عند إنشاء حساب الدخول تلقائياً
+    async saveEmployee(e) {
       const actor = this.currentUser();
       need(canHr(actor), NO_HR);
       const f = {};
@@ -297,9 +317,11 @@ const Store = (() => {
       need(!f.birthDate || !f.hireDate || f.hireDate > f.birthDate, 'تاريخ التعيين يجب أن يكون بعد تاريخ الميلاد');
       const salary = trim(e.salary) === '' ? null : Number(e.salary);
       need(salary === null || (Number.isFinite(salary) && salary >= 0), 'الراتب يجب أن يكون رقماً موجباً');
-      if (!f.empNo) f.empNo = this.nextEmpNo();
       const id = e.id || null;
-      const userId = trim(e.userId) || null;
+      let userId = trim(e.userId) || null;
+      // رقم الموظف تلقائي: يُولَّد عند الإضافة ولا يتغير بالتعديل
+      if (id) { f.empNo = all('SELECT emp_no FROM employees WHERE id = ?', [id])[0]?.emp_no; need(f.empNo, 'الموظف غير موجود'); }
+      else f.empNo = this.nextEmpNo();
       if (userId) {
         need(all('SELECT 1 FROM users WHERE id = ?', [userId]).length, 'حساب الدخول غير موجود');
         const used = all('SELECT id FROM employees WHERE user_id = ?', [userId])[0];
@@ -321,20 +343,29 @@ const Store = (() => {
           cur = all('SELECT manager_id FROM employees WHERE id = ?', [cur])[0]?.manager_id;
         }
       }
-      const dupNo = all('SELECT id FROM employees WHERE emp_no = ?', [f.empNo])[0];
-      need(!dupNo || dupNo.id === id, 'رقم الموظف مستخدم مسبقاً');
       if (f.nationalId) {
         const dupId = all('SELECT id FROM employees WHERE national_id = ?', [f.nationalId])[0];
         need(!dupId || dupId.id === id, 'رقم الهوية مسجّل لموظف آخر');
       }
+      // حساب دخول تلقائي: اسم المستخدم وكلمة المرور المؤقتة = رقم الهوية، ويُطلب تغييرها عند أول دخول
+      let newUser = null;
+      if (e.createAccount && !userId) {
+        need(f.nationalId.length >= 6, 'رقم الهوية (6 خانات على الأقل) مطلوب لإنشاء حساب الدخول');
+        need(!all('SELECT 1 FROM users WHERE username = ?', [f.nationalId])[0], 'يوجد حساب بنفس رقم الهوية مسبقاً');
+        newUser = { id: uid(), hash: await hashPw(f.nationalId) };
+        userId = newUser.id;
+      }
       const now = new Date().toISOString();
+      if (newUser) run("INSERT INTO users (id, username, password, name, role, must_change) VALUES (?,?,?,?,'employee',1)", [newUser.id, f.nationalId, newUser.hash, f.name]);
       const vals = [f.empNo, f.name, f.nationalId || null, f.gender, f.birthDate, f.nationality, f.marital, f.phone, f.email, f.address,
         f.department, f.jobTitle, f.empType, f.hireDate, salary, f.status, f.emergencyName, f.emergencyPhone, f.notes, userId, departmentId, jobTitleId, managerId];
       if (id) run(`UPDATE employees SET emp_no=?, name=?, national_id=?, gender=?, birth_date=?, nationality=?, marital=?, phone=?, email=?, address=?,
         department=?, job_title=?, emp_type=?, hire_date=?, salary=?, status=?, emergency_name=?, emergency_phone=?, notes=?, user_id=?, department_id=?, job_title_id=?, manager_id=?, updated_at=? WHERE id=?`, [...vals, now, id]);
       else run(`INSERT INTO employees (emp_no, name, national_id, gender, birth_date, nationality, marital, phone, email, address, department, job_title,
         emp_type, hire_date, salary, status, emergency_name, emergency_phone, notes, user_id, department_id, job_title_id, manager_id, id, created_at, updated_at) VALUES (${'?,'.repeat(25)}?)`, [...vals, uid(), now, now]);
-      return persist();
+      if (!id) seqCommit('seq_employees', Number(f.empNo.match(/\d+$/)[0]));
+      await persist();
+      return { accountCreated: newUser ? f.nationalId : null };
     },
     deleteEmployee(id) {
       const actor = this.currentUser();
@@ -350,10 +381,7 @@ const Store = (() => {
     // ---------- العقود ----------
     contractTypes: CONTRACT_TYPES, payBases: PAY_BASES,
     contracts() { need(canHr(this.currentUser()), NO_HR); return all(`${CONTRACT} ORDER BY start_date DESC, contract_no DESC`); },
-    nextContractNo() {
-      const max = all('SELECT contract_no FROM contracts').reduce((m, r) => Math.max(m, Number((r.contract_no.match(/\d+$/) || [0])[0])), 0);
-      return 'CNT-' + String(max + 1).padStart(4, '0');
-    },
+    nextContractNo: () => 'CNT-' + String(seqNext('seq_contracts', 'contracts', 'contract_no')).padStart(4, '0'),
     // الحالة المحسوبة: cancelled | upcoming | expired | expiring (خلال 30 يوماً) | active
     contractStatus(c) {
       const today = dateKey(new Date());
@@ -387,9 +415,10 @@ const Store = (() => {
         need(Number.isFinite(allow) && allow >= 0, 'البدلات يجب أن تكون رقماً موجباً');
       }
       need(['active', 'cancelled'].includes(status), 'حالة العقد غير صحيحة');
-      const no = trim(c.contractNo) || this.nextContractNo();
-      const dupNo = all('SELECT id FROM contracts WHERE contract_no = ?', [no])[0];
-      need(!dupNo || dupNo.id === id, 'رقم العقد مستخدم مسبقاً');
+      // رقم العقد تلقائي: يُولَّد عند الإضافة ولا يتغير بالتعديل
+      let no;
+      if (id) { no = all('SELECT contract_no FROM contracts WHERE id = ?', [id])[0]?.contract_no; need(no, 'العقد غير موجود'); }
+      else no = this.nextContractNo();
       if (status === 'active') { // لا يتداخل عقدان ساريان لنفس الموظف
         const clash = all("SELECT id FROM contracts WHERE employee_id = ? AND status = 'active' AND id != ? AND start_date <= ? AND COALESCE(end_date, ?) >= ?",
           [empId, id || '', end || FAR, FAR, start])[0];
@@ -400,6 +429,7 @@ const Store = (() => {
         [no, empId, type, payBasis, start, end || null, basic, allow, job, status, notes, now, id]);
       else run('INSERT INTO contracts (id, contract_no, employee_id, type, pay_basis, start_date, end_date, basic_salary, allowances, job_title, status, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         [uid(), no, empId, type, payBasis, start, end || null, basic, allow, job, status, notes, now, now]);
+      if (!id) seqCommit('seq_contracts', Number(no.match(/\d+$/)[0]));
       return persist();
     },
     deleteContract(id) {
@@ -519,12 +549,14 @@ const Store = (() => {
     // ---------- الحضور ----------
     todayRecord: userId => all(`${REC} WHERE user_id = ? AND date = ?`, [userId, dateKey(new Date())])[0] || null,
     checkIn(userId) {
+      need(!this.currentUser()?.mustChange, MUST_CHANGE);
       need(!this.todayRecord(userId), 'تم تسجيل الحضور اليوم مسبقاً');
       const now = new Date();
       run('INSERT INTO records (id, user_id, date, check_in) VALUES (?,?,?,?)', [uid(), userId, dateKey(now), now.toISOString()]);
       return persist();
     },
     checkOut(userId) {
+      need(!this.currentUser()?.mustChange, MUST_CHANGE);
       const r = this.todayRecord(userId);
       need(r, 'لم يتم تسجيل الحضور اليوم');
       need(!r.checkOut, 'تم تسجيل الانصراف مسبقاً');
