@@ -131,11 +131,13 @@ function renderHr() {
   sel.value = depts.includes(keep) ? keep : '';
   $('deptList').replaceChildren(...depts.map(d => new Option(d)));
   $('titleList').replaceChildren(...uniq(empCache.map(e => e.jobTitle)).map(t => new Option(t)));
+  const usersById = Object.fromEntries(Store.users().map(u => [u.id, u]));
   const rows = filteredEmployees();
   fillRows($('hrBody'), rows, (tr, e) => {
     numCell(tr, e.empNo);
     const td = cell(tr, e.name); if (e.phone) { const sub = document.createElement('span'); sub.className = 'cell-sub num'; sub.textContent = e.phone; td.appendChild(sub); }
     cell(tr, e.department || '—'); cell(tr, e.jobTitle || '—'); numCell(tr, e.hireDate || '—');
+    if (e.userId && usersById[e.userId]) numCell(tr, usersById[e.userId].username); else cell(tr, '—');
     badgeCell(tr, EMP_STATUS[e.status][0], EMP_STATUS[e.status][1]);
     actionsCell(tr,
       iconBtn('pencil', 'تعديل بيانات الموظف', () => openEmpDialog(e)),
@@ -144,22 +146,104 @@ function renderHr() {
         if (!confirm(`حذف ملف الموظف «${e.name}» نهائياً؟ للاحتفاظ بالسجل يمكنك تغيير حالته إلى «منتهي الخدمة» بدلاً من الحذف.`)) return;
         try { await Store.deleteEmployee(e.id); renderHr(); } catch (err) { showAlert('hrMsg', err.message); }
       }, true));
-  }, empCache.length ? 'لا توجد نتائج مطابقة للبحث' : 'لا يوجد موظفون بعد. ابدأ بإضافة أول موظف', 7);
+  }, empCache.length ? 'لا توجد نتائج مطابقة للبحث' : 'لا يوجد موظفون بعد. ابدأ بإضافة أول موظف', 8);
 }
 function openEmpDialog(emp) {
   hideAlert('empMsg');
   $('empForm').reset();
   $('empForm').dataset.id = emp ? emp.id : '';
   $('empTitle').textContent = emp ? `تعديل بيانات ${emp.name}` : 'إضافة موظف';
+  const taken = new Set(empCache.filter(x => x.userId && (!emp || x.id !== emp.id)).map(x => x.userId));
+  $('e_userId').replaceChildren(new Option('بدون حساب', ''), ...Store.users()
+    .filter(u => !taken.has(u.id) && (u.active || u.id === emp?.userId) && (me.role === 'admin' || u.id !== me.id))
+    .map(u => new Option(`${u.name} (${u.username})`, u.id)));
   document.querySelectorAll('#empForm [data-f]').forEach(el => { el.value = emp ? (emp[el.dataset.f] ?? '') : (el.dataset.f === 'status' ? 'active' : ''); });
   if (!emp) $('e_empNo').placeholder = Store.nextEmpNo();
+  updateEmpAtt();
   $('empDialog').showModal();
   $('e_name').focus();
+}
+// ملخص حضور الحساب المرتبط (الشهر الحالي)
+function updateEmpAtt() {
+  const uid = $('e_userId').value, box = $('empAtt');
+  box.classList.toggle('hidden', !uid);
+  if (!uid) return;
+  const a = Store.attendanceSummary(uid, thisMonth());
+  box.replaceChildren(...[[a.present, 'أيام الحضور'], [a.absent, 'أيام الغياب'], [a.late, 'مرات التأخير'], [a.hours.toFixed(1), 'ساعات العمل']].map(([v, l]) => {
+    const d = document.createElement('div'), b = document.createElement('b'), sp = document.createElement('span');
+    b.textContent = v; sp.textContent = l; d.append(b, sp); return d;
+  }));
+  const note = document.createElement('div'); note.className = 'att-note';
+  note.textContent = `ملخص الشهر الحالي (${thisMonth()}) من سجل حضور الحساب المرتبط`; box.appendChild(note);
 }
 function employeeFromForm() {
   const e = { id: $('empForm').dataset.id || undefined };
   document.querySelectorAll('#empForm [data-f]').forEach(el => { e[el.dataset.f] = el.value; });
   return e;
+}
+
+// ---------- العقود (موارد بشرية) ----------
+const CT_STATUS = { active: ['ساري', ''], expiring: ['ينتهي قريباً', 'late'], upcoming: ['لم يبدأ', 'open'], expired: ['منتهي', 'bad'], cancelled: ['ملغى', 'off'] };
+const money = n => Number(n).toLocaleString(LOCALE, { maximumFractionDigits: 2 });
+let ctCache = [], ctEmps = {};
+
+function filteredContracts() {
+  const q = $('cSearch').value.trim().toLowerCase(), st = $('cStatus').value;
+  return ctCache.filter(c => (!st || Store.contractStatus(c) === st) && (!q || `${c.contractNo} ${ctEmps[c.employeeId]?.name || ''}`.toLowerCase().includes(q)));
+}
+function renderContracts() {
+  ctCache = Store.contracts();
+  ctEmps = Object.fromEntries(Store.employees().map(e => [e.id, e]));
+  const count = k => ctCache.filter(c => Store.contractStatus(c) === k).length;
+  $('cTotal').textContent = ctCache.length;
+  $('cActive').textContent = count('active') + count('expiring');
+  $('cExpiring').textContent = count('expiring');
+  $('cExpired').textContent = count('expired');
+  fillRows($('contractsBody'), filteredContracts(), (tr, c) => {
+    const st = Store.contractStatus(c);
+    numCell(tr, c.contractNo); cell(tr, ctEmps[c.employeeId]?.name || '؟'); cell(tr, c.type);
+    numCell(tr, c.startDate); numCell(tr, c.endDate || 'غير محدد'); numCell(tr, money(c.basicSalary + c.allowances));
+    badgeCell(tr, CT_STATUS[st][0], CT_STATUS[st][1]);
+    actionsCell(tr,
+      iconBtn('pencil', 'تعديل العقد', () => openContractDialog(c)),
+      iconBtn('plus', 'تجديد العقد', () => openContractDialog(null, c)),
+      iconBtn('trash', 'حذف العقد', async () => {
+        hideAlert('contractsMsg');
+        if (!confirm(`حذف العقد ${c.contractNo} نهائياً؟ لإيقافه مع بقاء السجل غيّر حالته إلى «ملغى».`)) return;
+        try { await Store.deleteContract(c.id); renderContracts(); } catch (err) { showAlert('contractsMsg', err.message); }
+      }, true));
+  }, ctCache.length ? 'لا توجد عقود مطابقة' : 'لا توجد عقود بعد. أضف أول عقد', 8);
+}
+const addDays = (date, n) => { const d = new Date(date + 'T00:00:00'); d.setDate(d.getDate() + n); return Store.dateKey(d); };
+function updateContractSum() {
+  const t = (Number($('c_basicSalary').value) || 0) + (Number($('c_allowances').value) || 0);
+  $('cSum').textContent = t ? `الراتب الإجمالي: ${money(t)}` : '';
+}
+// c: عقد للتعديل، renewFrom: عقد يُجدَّد (يُملأ تلقائياً بعقد جديد يبدأ بعد انتهائه)
+function openContractDialog(c, renewFrom) {
+  hideAlert('contractMsg'); $('contractForm').reset();
+  const emps = Store.employees().filter(e => (me.role === 'admin' || e.userId !== me.id));
+  $('c_employeeId').replaceChildren(...emps.map(e => new Option(`${e.name} (${e.empNo})`, e.id)));
+  $('c_type').replaceChildren(...Store.contractTypes.map(t => new Option(t)));
+  $('contractForm').dataset.id = c ? c.id : '';
+  $('contractTitle').textContent = c ? `تعديل العقد ${c.contractNo}` : renewFrom ? `تجديد العقد ${renewFrom.contractNo}` : 'إضافة عقد';
+  $('c_contractNo').placeholder = Store.nextContractNo();
+  const src = c || renewFrom;
+  document.querySelectorAll('#contractForm [data-c]').forEach(el => { el.value = src ? (src[el.dataset.c] ?? '') : (el.dataset.c === 'status' ? 'active' : ''); });
+  if (renewFrom) {
+    $('c_contractNo').value = ''; $('c_status').value = 'active';
+    const start = renewFrom.endDate ? addDays(renewFrom.endDate, 1) : Store.dateKey(new Date());
+    $('c_startDate').value = start;
+    $('c_endDate').value = renewFrom.endDate ? addDays(start, Math.round((new Date(renewFrom.endDate) - new Date(renewFrom.startDate)) / 86400000)) : '';
+  }
+  if (!src && emps[0]) $('c_employeeId').value = emps[0].id;
+  updateContractSum();
+  $('contractDialog').showModal();
+}
+function contractFromForm() {
+  const c = { id: $('contractForm').dataset.id || undefined };
+  document.querySelectorAll('#contractForm [data-c]').forEach(el => { c[el.dataset.c] = el.value; });
+  return c;
 }
 
 // ---------- الحضور اليومي (مدير) ----------
@@ -200,16 +284,27 @@ function renderReport() {
 }
 
 // ---------- الموظفون (مدير) ----------
+function permCell(tr, u) {
+  const td = document.createElement('td');
+  const add = (text, cls) => { const b = document.createElement('span'); b.className = 'badge ' + cls; b.textContent = text; b.style.marginInlineEnd = '4px'; td.appendChild(b); };
+  if (u.role === 'admin') add('كاملة', 'admin');
+  else { if (u.canHr) add('موارد بشرية', 'perm'); if (u.canEdit) add('تعديل الحضور', 'perm'); if (!u.canHr && !u.canEdit) add('—', 'off'); }
+  tr.appendChild(td);
+}
 function renderUsers() {
   fillRows($('usersBody'), Store.users(), (tr, u) => {
     cell(tr, u.name); numCell(tr, u.username);
     badgeCell(tr, u.role === 'admin' ? 'مدير' : 'موظف', u.role === 'admin' ? 'admin' : 'off');
     badgeCell(tr, u.active ? 'فعّال' : 'معطّل', u.active ? '' : 'bad');
-    badgeCell(tr, u.role === 'admin' ? 'كاملة' : u.canEdit ? 'مسموح' : 'غير مسموح', u.role === 'admin' ? 'admin' : u.canEdit ? '' : 'off');
+    permCell(tr, u);
     actionsCell(tr,
-      u.role === 'admin' ? iconBtn('pencil', 'المدير يملك صلاحية التعديل دائماً', null, false, true) : iconBtn('pencil', u.canEdit ? 'سحب صلاحية تعديل الحضور' : 'منح صلاحية تعديل الحضور', async () => {
+      u.role === 'admin' ? iconBtn('briefcase', 'المدير يملك كل الصلاحيات', null, false, true) : iconBtn('briefcase', u.canHr ? 'سحب صلاحية الموارد البشرية' : 'منح صلاحية الموارد البشرية', async () => {
         hideAlert('usersMsg');
-        try { await Store.setCanEdit(u.id, !u.canEdit); renderUsers(); } catch (e) { showAlert('usersMsg', e.message); }
+        try { await Store.setPermission(u.id, 'hr', !u.canHr); renderUsers(); } catch (e) { showAlert('usersMsg', e.message); }
+      }, !!u.canHr),
+      u.role === 'admin' ? iconBtn('pencil', 'المدير يملك كل الصلاحيات', null, false, true) : iconBtn('pencil', u.canEdit ? 'سحب صلاحية تعديل الحضور' : 'منح صلاحية تعديل الحضور', async () => {
+        hideAlert('usersMsg');
+        try { await Store.setPermission(u.id, 'edit', !u.canEdit); renderUsers(); } catch (e) { showAlert('usersMsg', e.message); }
       }, !!u.canEdit),
       iconBtn('key', 'إعادة تعيين كلمة المرور', () => openPwDialog(u)),
       iconBtn(u.active ? 'ban' : 'check', u.active ? 'تعطيل الحساب' : 'تفعيل الحساب', async () => {
@@ -240,9 +335,10 @@ function renderSettings() {
 }
 
 // ---------- التبويبات ----------
-const RENDER = { hr: renderHr, me: () => { renderToday(); renderMine(); }, daily: renderAdmin, report: renderReport, users: renderUsers, settings: renderSettings };
+const RENDER = { contracts: renderContracts, hr: renderHr, me: () => { renderToday(); renderMine(); }, daily: renderAdmin, report: renderReport, users: renderUsers, settings: renderSettings };
 function showTab(name) {
-  if (!RENDER[name] || (name !== 'me' && !(me.role === 'admin' || (name === 'daily' && Store.canEditAttendance(me))))) name = 'me';
+  const allowed = me.role === 'admin' || name === 'me' || (['hr', 'contracts'].includes(name) && Store.canHr(me)) || (name === 'daily' && Store.canEditAttendance(me));
+  if (!RENDER[name] || !allowed) name = 'me';
   document.querySelectorAll('[data-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== name));
   document.querySelectorAll('[data-tab]').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
   history.replaceState(null, '', '#' + name);
@@ -261,7 +357,8 @@ function init() {
   me = Store.currentUser();
   if (!me) return location.replace('login.html');
   $('userName').textContent = me.name;
-  $('userRole').textContent = me.role === 'admin' ? 'مدير' : 'موظف';
+  const myEmp = Store.employeeOfUser(me.id);
+  $('userRole').textContent = [myEmp?.jobTitle, myEmp?.department].filter(Boolean).join(' · ') || (me.role === 'admin' ? 'مدير' : 'موظف');
   $('avatar').textContent = [...me.name][0];
   $('logout').onclick = () => { Store.logout(); location.replace('login.html'); };
   $('btnPw').onclick = () => openPwDialog(me);
@@ -287,6 +384,39 @@ function init() {
     } catch (err) { showAlert('pwMsg', err.message); }
   };
 
+  if (Store.canHr(me)) {
+    document.querySelectorAll('.hr-only').forEach(el => el.classList.remove('hidden'));
+
+    // شؤون الموظفين
+    $('addEmp').onclick = () => openEmpDialog(null);
+    $('empCancel').onclick = () => $('empDialog').close();
+    $('empForm').onsubmit = async e => {
+      e.preventDefault(); hideAlert('empMsg');
+      try { await Store.saveEmployee(employeeFromForm()); $('empDialog').close(); renderHr(); }
+      catch (err) { showAlert('empMsg', err.message); $('empDialog').scrollTo({ top: $('empDialog').scrollHeight }); }
+    };
+    ['hSearch', 'hStatus', 'hDept'].forEach(id => $(id).addEventListener('input', renderHr));
+    $('exportEmp').onclick = () => downloadCsv(`employees-${Store.dateKey(new Date())}.csv`,
+      [['رقم الموظف', 'الاسم', 'الهوية', 'الجنس', 'تاريخ الميلاد', 'الجنسية', 'الحالة الاجتماعية', 'الهاتف', 'البريد', 'العنوان', 'القسم', 'المسمى الوظيفي', 'نوع التوظيف', 'تاريخ التعيين', 'الحالة']]
+        .concat(filteredEmployees().map(x => [x.empNo, x.name, x.nationalId, x.gender, x.birthDate, x.nationality, x.marital, x.phone, x.email, x.address, x.department, x.jobTitle, x.empType, x.hireDate, EMP_STATUS[x.status][0]])));
+
+    $('e_userId').onchange = updateEmpAtt;
+
+    // العقود
+    $('addContract').onclick = () => openContractDialog(null);
+    $('contractCancel').onclick = () => $('contractDialog').close();
+    ['c_basicSalary', 'c_allowances'].forEach(id => $(id).addEventListener('input', updateContractSum));
+    $('contractForm').onsubmit = async e => {
+      e.preventDefault(); hideAlert('contractMsg');
+      try { await Store.saveContract(contractFromForm()); $('contractDialog').close(); renderContracts(); }
+      catch (err) { showAlert('contractMsg', err.message); $('contractDialog').scrollTo({ top: $('contractDialog').scrollHeight }); }
+    };
+    ['cSearch', 'cStatus'].forEach(id => $(id).addEventListener('input', renderContracts));
+    $('exportContracts').onclick = () => downloadCsv(`contracts-${Store.dateKey(new Date())}.csv`,
+      [['رقم العقد', 'الموظف', 'النوع', 'البداية', 'النهاية', 'الراتب الأساسي', 'البدلات', 'الحالة']]
+        .concat(filteredContracts().map(c => [c.contractNo, ctEmps[c.employeeId]?.name || '', c.type, c.startDate, c.endDate || '', c.basicSalary, c.allowances, CT_STATUS[Store.contractStatus(c)][0]])));
+  }
+
   if (Store.canEditAttendance(me)) {
     document.querySelectorAll('.edit-only').forEach(el => el.classList.remove('hidden'));
 
@@ -310,19 +440,6 @@ function init() {
 
   if (me.role === 'admin') {
     document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('hidden'));
-
-    // شؤون الموظفين
-    $('addEmp').onclick = () => openEmpDialog(null);
-    $('empCancel').onclick = () => $('empDialog').close();
-    $('empForm').onsubmit = async e => {
-      e.preventDefault(); hideAlert('empMsg');
-      try { await Store.saveEmployee(employeeFromForm()); $('empDialog').close(); renderHr(); }
-      catch (err) { showAlert('empMsg', err.message); $('empDialog').scrollTo({ top: $('empDialog').scrollHeight }); }
-    };
-    ['hSearch', 'hStatus', 'hDept'].forEach(id => $(id).addEventListener('input', renderHr));
-    $('exportEmp').onclick = () => downloadCsv(`employees-${Store.dateKey(new Date())}.csv`,
-      [['رقم الموظف', 'الاسم', 'الهوية', 'الجنس', 'تاريخ الميلاد', 'الجنسية', 'الحالة الاجتماعية', 'الهاتف', 'البريد', 'العنوان', 'القسم', 'المسمى الوظيفي', 'نوع التوظيف', 'تاريخ التعيين', 'الحالة']]
-        .concat(filteredEmployees().map(x => [x.empNo, x.name, x.nationalId, x.gender, x.birthDate, x.nationality, x.marital, x.phone, x.email, x.address, x.department, x.jobTitle, x.empType, x.hireDate, EMP_STATUS[x.status][0]])));
 
     $('exportReport').onclick = () => downloadCsv(`report-${$('reportMonth').value}.csv`, [['الموظف', 'أيام الدوام', 'الحضور', 'الغياب', 'التأخير', 'ساعات العمل']]
       .concat(Store.report($('reportMonth').value).map(r => [r.name, r.workingDays, r.present, r.absent, r.late, r.hours.toFixed(1)])));
@@ -367,7 +484,7 @@ function init() {
   }
 
   tickClock(); setInterval(tickClock, 1000);
-  showTab(location.hash.slice(1) || (me.role === 'admin' ? 'hr' : 'me'));
+  showTab(location.hash.slice(1) || (Store.canHr(me) ? 'hr' : 'me'));
 }
 
 skeleton($('myBody'));
