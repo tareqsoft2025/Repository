@@ -1,0 +1,52 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root { --ink: #1A2332; --muted: #5B6675; --line: #C9D0DA; --brand: #1F3A5F; --gold: #C9A227; --tint: #F3F5F9; }
+body { font-family: "IBM Plex Sans Arabic", "Segoe UI", Tahoma, sans-serif; color: var(--ink); background: #E8ECF2; line-height: 1.8; font-size: 14px; }
+.toolbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: #fff; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tb { height: 38px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--line); background: #fff; font: 600 14px/1 inherit; font-family: inherit; cursor: pointer; }
+.tb.primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+.tip { color: var(--muted); font-size: 12px; }
+.error { margin: 24px auto; max-width: 760px; padding: 14px 18px; background: #FCE9E9; color: #A31818; border-radius: 10px; }
+
+.sheet { width: 210mm; min-height: 297mm; margin: 16px auto; padding: 16mm 16mm 14mm; background: #fff; box-shadow: 0 4px 24px rgba(16,24,40,.12); }
+.head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding-bottom: 12px; border-bottom: 3px double var(--brand); }
+.head .org { font-size: 18px; font-weight: 700; color: var(--brand); }
+.head .org small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
+.head .meta { text-align: end; font-size: 12.5px; color: var(--muted); line-height: 1.9; }
+.head .meta b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.title { text-align: center; margin: 18px 0 6px; font-size: 22px; font-weight: 700; color: var(--brand); }
+.subtitle { text-align: center; margin-bottom: 14px; color: var(--muted); font-size: 13px; }
+.intro { margin: 8px 0 12px; }
+
+h2 { font-size: 14px; font-weight: 700; color: #fff; background: var(--brand); padding: 3px 12px; border-radius: 4px; margin: 14px 0 8px; break-after: avoid; }
+.parties { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.party { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; break-inside: avoid; }
+.party h3 { font-size: 13px; color: var(--brand); margin-bottom: 4px; }
+.kv { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.kv div { display: flex; gap: 8px; padding: 5px 10px; border-bottom: 1px solid var(--line); break-inside: avoid; }
+.kv div.h1 { border-inline-end: 1px solid var(--line); }
+.kv div.full { grid-column: 1 / -1; }
+.kv span { flex: none; min-width: 112px; color: var(--muted); font-size: 12.5px; }
+.kv b { font-weight: 600; overflow-wrap: anywhere; }
+.num { direction: ltr; unicode-bidi: isolate; display: inline-block; font-variant-numeric: tabular-nums; }
+.en { direction: ltr; unicode-bidi: isolate; display: inline-block; }
+.para { margin: 6px 0; text-align: justify; }
+.box { border: 1px solid var(--line); background: var(--tint); border-radius: 6px; padding: 8px 12px; margin: 6px 0; white-space: pre-wrap; break-inside: avoid; }
+ol.clauses { list-style: none; counter-reset: c; }
+ol.clauses li { margin: 6px 0; text-align: justify; counter-increment: c; break-inside: avoid; }
+ol.clauses li::before { content: "البند " attr(data-ord) ": "; font-weight: 700; color: var(--brand); }
+.sign { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 26px; break-inside: avoid; }
+.sign div { text-align: center; }
+.sign .who { font-weight: 700; color: var(--brand); }
+.sign .line { height: 54px; border-bottom: 1px solid var(--ink); margin: 8px 18px 4px; }
+.sign small { color: var(--muted); }
+.foot { margin-top: 22px; padding-top: 8px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); }
+
+@page { size: A4; margin: 12mm 0 12mm 0; }
+@media print {
+  body { background: #fff; }
+  .no-print { display: none !important; }
+  .sheet { width: auto; min-height: 0; margin: 0; padding: 0 16mm; box-shadow: none; }
+  h2 { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .box { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+@media (max-width: 800px) { .sheet { width: auto; margin: 0; padding: 14px; } .parties, .kv, .sign { grid-template-columns: 1fr; } .kv div.h1 { border-inline-end: 0; } }

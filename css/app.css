@@ -110,6 +110,9 @@ th { background: var(--surface-alt); color: var(--text-muted); font-size: var(--
 td { padding: 0 var(--s4); height: 48px; border-top: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
 tbody tr { transition: background .15s var(--ease); }
 tbody tr:hover { background: var(--surface-alt); }
+table.compact th, table.compact td { padding-inline: var(--s3); }
+table.compact td { white-space: normal; padding-block: var(--s2); }
+table.compact td.no-print, table.compact td .badge, table.compact td.no-print * { white-space: nowrap; }
 .badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: var(--radius-full); font-size: var(--text-xs); font-weight: 600; background: var(--success-tint); color: var(--success-ink); }
 .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .badge.late { background: var(--warning-tint); color: var(--warning-ink); }
@@ -306,6 +309,21 @@ dialog.xl { width: min(980px, calc(100vw - 32px)); }
 .notice { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s4); border-radius: var(--radius-sm); font-size: var(--text-sm); margin-bottom: var(--s4); background: var(--warning-tint); color: var(--warning-ink); }
 .notice.bad { background: var(--danger-tint); color: var(--danger-ink); }
 .sub-title { font-size: var(--text-sm); font-weight: 600; color: var(--text-muted); margin: var(--s5) 0 var(--s2); }
+
+/* ===== Contract tabs ===== */
+.ct-tabs { display: flex; gap: var(--s2); border-bottom: 1px solid var(--border); margin-bottom: var(--s4); overflow-x: auto; scrollbar-width: none; }
+.ct-tabs button { display: inline-flex; align-items: center; gap: var(--s2); height: 46px; padding-inline: var(--s4); border: 0; border-bottom: 3px solid transparent; background: none; color: var(--text-muted); font: 600 var(--text-sm)/1 var(--font); cursor: pointer; white-space: nowrap; margin-bottom: -1px; transition: color .15s var(--ease), border-color .15s var(--ease); }
+.ct-tabs button:hover { color: var(--primary); }
+.ct-tabs button[aria-selected=true] { color: var(--primary); border-bottom-color: var(--accent); }
+.ct-tabs button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; border-radius: var(--radius-sm); }
+.ct-tabs .cnt { min-width: 24px; padding: 1px 8px; border-radius: var(--radius-full); background: var(--surface-alt); color: var(--text-muted); font-size: var(--text-xs); text-align: center; }
+.ct-tabs button[aria-selected=true] .cnt { background: var(--primary); color: #fff; }
+.toggle { display: inline-flex; align-items: center; gap: var(--s2); height: 44px; width: 100%; justify-content: center; padding-inline: var(--s4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--text); font: 600 var(--text-sm)/1 var(--font); cursor: pointer; transition: background .15s var(--ease), border-color .15s var(--ease); }
+.toggle:hover { background: var(--surface-alt); }
+.toggle[aria-pressed=true] { background: var(--primary-tint); border-color: var(--primary); color: var(--primary); }
+.toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.readonly { min-height: 44px; display: flex; align-items: center; padding: 0 var(--s4); border: 1px dashed var(--border); border-radius: var(--radius-sm); background: var(--surface-alt); color: var(--text); font-size: var(--text-sm); }
+#contractDialog.is-monthly .k-worker, #contractDialog.is-worker .k-monthly { display: none; }
 
 /* ===== Segmented control ===== */
 .seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--surface-alt); border-radius: var(--radius-md); border: 1px solid var(--border); }
