@@ -56,7 +56,8 @@ const Store = (() => {
       name TEXT NOT NULL,
       role TEXT NOT NULL CHECK (role IN ('admin','employee')),
       active INTEGER NOT NULL DEFAULT 1,
-      can_edit INTEGER NOT NULL DEFAULT 0);
+      can_edit INTEGER NOT NULL DEFAULT 0,
+      can_hr INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS records (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id),
@@ -78,7 +79,20 @@ const Store = (() => {
       department TEXT, job_title TEXT, emp_type TEXT, hire_date TEXT, salary REAL,
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','leave','terminated')),
       emergency_name TEXT, emergency_phone TEXT, notes TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`;
+      user_id TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS contracts (
+      id TEXT PRIMARY KEY,
+      contract_no TEXT NOT NULL UNIQUE,
+      employee_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      start_date TEXT NOT NULL, end_date TEXT,
+      basic_salary REAL NOT NULL, allowances REAL NOT NULL DEFAULT 0,
+      job_title TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','cancelled')),
+      notes TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_contracts_emp ON contracts(employee_id);`;
 
   let cfg = { ...DEFAULTS };
   function ensureSchema() {
@@ -90,6 +104,9 @@ const Store = (() => {
     addCol('users', 'can_edit', 'INTEGER NOT NULL DEFAULT 0');
     addCol('records', 'edited_by', 'TEXT');
     addCol('records', 'edited_at', 'TEXT');
+    addCol('users', 'can_hr', 'INTEGER NOT NULL DEFAULT 0');
+    addCol('employees', 'user_id', 'TEXT');
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_emp_user ON employees(user_id) WHERE user_id IS NOT NULL');
     cfg = { ...DEFAULTS };
     all('SELECT key, value FROM settings').forEach(r => { if (r.key in DEFAULTS) cfg[r.key] = r.value; });
   }
@@ -130,17 +147,26 @@ const Store = (() => {
   })();
 
   const REC = 'SELECT id, user_id AS userId, date, check_in AS checkIn, check_out AS checkOut, edited_by AS editedBy, edited_at AS editedAt FROM records';
-  const USER = 'SELECT id, username, name, role, active, can_edit AS canEdit FROM users';
+  const USER = 'SELECT id, username, name, role, active, can_edit AS canEdit, can_hr AS canHr FROM users';
   const activeAdmins = () => all("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1")[0].n;
   const need = (cond, msg) => { if (!cond) throw new Error(msg); };
   // الصلاحيات: المدير يملك كل شيء، وغيره يملك ما مُنح له فقط
   const isAdmin = u => !!u && u.role === 'admin';
   const canEditAttendance = u => !!u && (u.role === 'admin' || u.canEdit === 1);
+  const canHr = u => !!u && (u.role === 'admin' || u.canHr === 1); // مسؤول موارد بشرية
+  const NO_HR = 'ليست لديك صلاحية الموارد البشرية';
+  const CONTRACT = `SELECT id, contract_no AS contractNo, employee_id AS employeeId, type, start_date AS startDate, end_date AS endDate,
+    basic_salary AS basicSalary, allowances, job_title AS jobTitle, status, notes FROM contracts`;
+  const FAR = '9999-12-31';
+  const CONTRACT_TYPES = ['دائم', 'محدد المدة', 'تجريبي', 'موسمي', 'دوام جزئي'];
+  const SELF_HR = 'لا يمكنك تعديل ملفك الشخصي أو عقدك بنفسك';
+  // ملف موظف مرتبط بحساب الممارِس: لا يعدّله إلا المدير (فصل المسؤوليات)
+  const ownsEmployee = (actor, empId) => !!empId && all('SELECT 1 FROM employees WHERE id = ? AND user_id = ?', [empId, actor.id]).length > 0;
   const ADMIN_ONLY = 'هذه العملية للمدير فقط';
   const NO_EDIT = 'ليست لديك صلاحية تعديل الحضور';
   const EMP = `SELECT id, emp_no AS empNo, name, national_id AS nationalId, gender, birth_date AS birthDate, nationality, marital,
     phone, email, address, department, job_title AS jobTitle, emp_type AS empType, hire_date AS hireDate, salary, status,
-    emergency_name AS emergencyName, emergency_phone AS emergencyPhone, notes FROM employees`;
+    emergency_name AS emergencyName, emergency_phone AS emergencyPhone, notes, user_id AS userId FROM employees`;
   const trim = v => (v == null ? '' : String(v).trim());
   const checkPw = pw => need(pw && pw.length >= 6, 'كلمة المرور يجب ألا تقل عن 6 أحرف');
   const localISO = (date, hhmm) => { const [y, m, d] = date.split('-').map(Number), [h, mi] = hhmm.split(':').map(Number); return new Date(y, m - 1, d, h, mi).toISOString(); };
@@ -211,13 +237,20 @@ const Store = (() => {
     },
 
     // ---------- ملفات الموظفين (شؤون الموظفين) ----------
-    employees: () => all(`${EMP} ORDER BY emp_no`),
+    employees() { need(canHr(this.currentUser()), NO_HR); return all(`${EMP} ORDER BY emp_no`); },
+    // بيانات الموظف المرتبط بحساب معيّن (لصاحب الحساب أو للموارد البشرية)
+    employeeOfUser(userId) {
+      const me = this.currentUser();
+      if (!me || (me.id !== userId && !canHr(me))) return null;
+      return all(`${EMP} WHERE user_id = ?`, [userId])[0] || null;
+    },
     nextEmpNo() {
       const max = all('SELECT emp_no FROM employees').reduce((m, r) => Math.max(m, Number((r.emp_no.match(/\d+$/) || [0])[0])), 0);
       return 'EMP-' + String(max + 1).padStart(4, '0');
     },
     saveEmployee(e) {
-      need(isAdmin(this.currentUser()), ADMIN_ONLY);
+      const actor = this.currentUser();
+      need(canHr(actor), NO_HR);
       const f = {};
       for (const k of ['empNo', 'name', 'nationalId', 'gender', 'birthDate', 'nationality', 'marital', 'phone', 'email', 'address',
         'department', 'jobTitle', 'empType', 'hireDate', 'status', 'emergencyName', 'emergencyPhone', 'notes']) f[k] = trim(e[k]);
@@ -234,6 +267,13 @@ const Store = (() => {
       need(salary === null || (Number.isFinite(salary) && salary >= 0), 'الراتب يجب أن يكون رقماً موجباً');
       if (!f.empNo) f.empNo = this.nextEmpNo();
       const id = e.id || null;
+      const userId = trim(e.userId) || null;
+      if (userId) {
+        need(all('SELECT 1 FROM users WHERE id = ?', [userId]).length, 'حساب الدخول غير موجود');
+        const used = all('SELECT id FROM employees WHERE user_id = ?', [userId])[0];
+        need(!used || used.id === id, 'هذا الحساب مرتبط بموظف آخر');
+      }
+      need(isAdmin(actor) || (userId !== actor.id && !ownsEmployee(actor, id)), SELF_HR);
       const dupNo = all('SELECT id FROM employees WHERE emp_no = ?', [f.empNo])[0];
       need(!dupNo || dupNo.id === id, 'رقم الموظف مستخدم مسبقاً');
       if (f.nationalId) {
@@ -242,29 +282,94 @@ const Store = (() => {
       }
       const now = new Date().toISOString();
       const vals = [f.empNo, f.name, f.nationalId || null, f.gender, f.birthDate, f.nationality, f.marital, f.phone, f.email, f.address,
-        f.department, f.jobTitle, f.empType, f.hireDate, salary, f.status, f.emergencyName, f.emergencyPhone, f.notes];
+        f.department, f.jobTitle, f.empType, f.hireDate, salary, f.status, f.emergencyName, f.emergencyPhone, f.notes, userId];
       if (id) run(`UPDATE employees SET emp_no=?, name=?, national_id=?, gender=?, birth_date=?, nationality=?, marital=?, phone=?, email=?, address=?,
-        department=?, job_title=?, emp_type=?, hire_date=?, salary=?, status=?, emergency_name=?, emergency_phone=?, notes=?, updated_at=? WHERE id=?`, [...vals, now, id]);
+        department=?, job_title=?, emp_type=?, hire_date=?, salary=?, status=?, emergency_name=?, emergency_phone=?, notes=?, user_id=?, updated_at=? WHERE id=?`, [...vals, now, id]);
       else run(`INSERT INTO employees (emp_no, name, national_id, gender, birth_date, nationality, marital, phone, email, address, department, job_title,
-        emp_type, hire_date, salary, status, emergency_name, emergency_phone, notes, id, created_at, updated_at) VALUES (${'?,'.repeat(21)}?)`, [...vals, uid(), now, now]);
+        emp_type, hire_date, salary, status, emergency_name, emergency_phone, notes, user_id, id, created_at, updated_at) VALUES (${'?,'.repeat(22)}?)`, [...vals, uid(), now, now]);
       return persist();
     },
     deleteEmployee(id) {
-      need(isAdmin(this.currentUser()), ADMIN_ONLY);
+      const actor = this.currentUser();
+      need(canHr(actor), NO_HR);
+      need(isAdmin(actor) || !ownsEmployee(actor, id), SELF_HR);
+      run('DELETE FROM contracts WHERE employee_id = ?', [id]);
       run('DELETE FROM employees WHERE id = ?', [id]);
       return persist();
     },
 
-    // منح/سحب صلاحية تعديل الحضور (المدير يملكها دائماً)
-    setCanEdit(userId, allowed) {
+    // ---------- العقود ----------
+    contractTypes: CONTRACT_TYPES,
+    contracts() { need(canHr(this.currentUser()), NO_HR); return all(`${CONTRACT} ORDER BY start_date DESC, contract_no DESC`); },
+    nextContractNo() {
+      const max = all('SELECT contract_no FROM contracts').reduce((m, r) => Math.max(m, Number((r.contract_no.match(/\d+$/) || [0])[0])), 0);
+      return 'CNT-' + String(max + 1).padStart(4, '0');
+    },
+    // الحالة المحسوبة: cancelled | upcoming | expired | expiring (خلال 30 يوماً) | active
+    contractStatus(c) {
+      const today = dateKey(new Date());
+      if (c.status === 'cancelled') return 'cancelled';
+      if (c.startDate > today) return 'upcoming';
+      if (c.endDate) {
+        if (c.endDate < today) return 'expired';
+        if ((new Date(c.endDate) - new Date(today)) / 86400000 <= 30) return 'expiring';
+      }
+      return 'active';
+    },
+    saveContract(c) {
+      const actor = this.currentUser();
+      need(canHr(actor), NO_HR);
+      const id = c.id || null, empId = trim(c.employeeId);
+      need(all('SELECT 1 FROM employees WHERE id = ?', [empId]).length, 'اختر الموظف');
+      need(isAdmin(actor) || (!ownsEmployee(actor, empId) && !(id && ownsEmployee(actor, all('SELECT employee_id FROM contracts WHERE id = ?', [id])[0]?.employee_id))), SELF_HR);
+      const type = trim(c.type), start = trim(c.startDate), end = trim(c.endDate), status = trim(c.status) || 'active';
+      need(CONTRACT_TYPES.includes(type), 'اختر نوع العقد');
+      need(/^\d{4}-\d\d-\d\d$/.test(start), 'أدخل تاريخ بداية العقد');
+      need(!end || /^\d{4}-\d\d-\d\d$/.test(end), 'تاريخ انتهاء غير صحيح');
+      if (type === 'دائم') need(!end, 'العقد الدائم لا يحتاج تاريخ انتهاء');
+      else need(end, 'أدخل تاريخ انتهاء العقد');
+      need(!end || end >= start, 'تاريخ الانتهاء يجب ألا يسبق تاريخ البداية');
+      const basic = Number(c.basicSalary), allow = trim(c.allowances) === '' ? 0 : Number(c.allowances);
+      need(trim(c.basicSalary) !== '' && Number.isFinite(basic) && basic >= 0, 'أدخل الراتب الأساسي (رقماً موجباً)');
+      need(Number.isFinite(allow) && allow >= 0, 'البدلات يجب أن تكون رقماً موجباً');
+      need(['active', 'cancelled'].includes(status), 'حالة العقد غير صحيحة');
+      const no = trim(c.contractNo) || this.nextContractNo();
+      const dupNo = all('SELECT id FROM contracts WHERE contract_no = ?', [no])[0];
+      need(!dupNo || dupNo.id === id, 'رقم العقد مستخدم مسبقاً');
+      if (status === 'active') { // لا يتداخل عقدان ساريان لنفس الموظف
+        const clash = all("SELECT id FROM contracts WHERE employee_id = ? AND status = 'active' AND id != ? AND start_date <= ? AND COALESCE(end_date, ?) >= ?",
+          [empId, id || '', end || FAR, FAR, start])[0];
+        need(!clash, 'يتداخل هذا العقد مع عقد آخر ساري لنفس الموظف');
+      }
+      const now = new Date().toISOString(), job = trim(c.jobTitle), notes = trim(c.notes);
+      if (id) run('UPDATE contracts SET contract_no=?, employee_id=?, type=?, start_date=?, end_date=?, basic_salary=?, allowances=?, job_title=?, status=?, notes=?, updated_at=? WHERE id=?',
+        [no, empId, type, start, end || null, basic, allow, job, status, notes, now, id]);
+      else run('INSERT INTO contracts (id, contract_no, employee_id, type, start_date, end_date, basic_salary, allowances, job_title, status, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [uid(), no, empId, type, start, end || null, basic, allow, job, status, notes, now, now]);
+      return persist();
+    },
+    deleteContract(id) {
+      const actor = this.currentUser();
+      need(canHr(actor), NO_HR);
+      const row = all('SELECT employee_id FROM contracts WHERE id = ?', [id])[0];
+      need(row, 'العقد غير موجود');
+      need(isAdmin(actor) || !ownsEmployee(actor, row.employee_id), SELF_HR);
+      run('DELETE FROM contracts WHERE id = ?', [id]);
+      return persist();
+    },
+
+    // منح/سحب صلاحية: edit = تعديل الحضور، hr = مسؤول موارد بشرية (المدير يملكهما دائماً)
+    setPermission(userId, perm, allowed) {
       need(isAdmin(this.currentUser()), ADMIN_ONLY);
+      const col = { edit: 'can_edit', hr: 'can_hr' }[perm];
+      need(col, 'صلاحية غير معروفة');
       const u = all(`${USER} WHERE id = ?`, [userId])[0];
       need(u, 'المستخدم غير موجود');
       need(u.role !== 'admin', 'المدير يملك هذه الصلاحية دائماً');
-      run('UPDATE users SET can_edit = ? WHERE id = ?', [allowed ? 1 : 0, userId]);
+      run(`UPDATE users SET ${col} = ? WHERE id = ?`, [allowed ? 1 : 0, userId]);
       return persist();
     },
-    canEditAttendance,
+    canEditAttendance, canHr,
 
     // ---------- الحضور ----------
     todayRecord: userId => all(`${REC} WHERE user_id = ? AND date = ?`, [userId, dateKey(new Date())])[0] || null,
@@ -327,14 +432,15 @@ const Store = (() => {
       }
       return n;
     },
-    report(month) {
+    attendanceSummary(userId, month) {
       const wd = this.workingDays(month);
-      return all("SELECT id, name FROM users WHERE active = 1 ORDER BY name").map(u => {
-        const recs = all(`${REC} WHERE user_id = ? AND date LIKE ?`, [u.id, month + '%']);
-        const onWorkDays = recs.filter(r => !this.isWeekend(r.date));
-        return { name: u.name, workingDays: wd, present: onWorkDays.length, absent: Math.max(0, wd - onWorkDays.length),
-          late: recs.filter(r => this.isLate(r)).length, hours: recs.reduce((t, r) => t + this.hours(r), 0) };
-      });
+      const recs = all(`${REC} WHERE user_id = ? AND date LIKE ?`, [userId, month + '%']);
+      const onWorkDays = recs.filter(r => !this.isWeekend(r.date));
+      return { workingDays: wd, present: onWorkDays.length, absent: Math.max(0, wd - onWorkDays.length),
+        late: recs.filter(r => this.isLate(r)).length, hours: recs.reduce((t, r) => t + this.hours(r), 0) };
+    },
+    report(month) {
+      return all("SELECT id, name FROM users WHERE active = 1 ORDER BY name").map(u => ({ name: u.name, ...this.attendanceSummary(u.id, month) }));
     },
 
     // ---------- نسخ احتياطي ----------
