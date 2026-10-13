@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>الحضور والانصراف</title>
+    <title>نظام شؤون الموظفين</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -12,7 +12,7 @@
 <body>
     <header class="topbar">
         <div class="topbar-in">
-            <div class="brand"><div class="mark"><svg class="i"><use href="#i-calendar-check"/></svg></div><span>الحضور والانصراف</span></div>
+            <div class="brand"><div class="mark"><svg class="i"><use href="#i-briefcase"/></svg></div><span>شؤون الموظفين</span></div>
             <div class="user">
                 <div class="avatar" id="avatar" aria-hidden="true"></div>
                 <div class="user-meta"><b id="userName"></b><span id="userRole"></span></div>
@@ -22,9 +22,10 @@
         </div>
         <nav class="tabs" role="tablist" aria-label="الأقسام">
             <button class="tab" role="tab" data-tab="me"><svg class="i"><use href="#i-clock"/></svg>لوحتي</button>
+            <button class="tab admin-only hidden" role="tab" data-tab="hr"><svg class="i"><use href="#i-briefcase"/></svg>شؤون الموظفين</button>
             <button class="tab edit-only hidden" role="tab" data-tab="daily"><svg class="i"><use href="#i-calendar-check"/></svg>الحضور اليومي</button>
             <button class="tab admin-only hidden" role="tab" data-tab="report"><svg class="i"><use href="#i-file-text"/></svg>التقارير</button>
-            <button class="tab admin-only hidden" role="tab" data-tab="users"><svg class="i"><use href="#i-users"/></svg>الموظفون</button>
+            <button class="tab admin-only hidden" role="tab" data-tab="users"><svg class="i"><use href="#i-users"/></svg>الحسابات</button>
             <button class="tab admin-only hidden" role="tab" data-tab="settings"><svg class="i"><use href="#i-settings"/></svg>الإعدادات</button>
         </nav>
     </header>
@@ -68,6 +69,32 @@
             </section>
         </div>
 
+        <!-- شؤون الموظفين (مدير) -->
+        <div class="panel hidden" data-panel="hr">
+            <section class="stats-row" aria-label="ملخص الموظفين">
+                <div class="card stat"><div class="ico"><svg class="i"><use href="#i-users"/></svg></div><div><b id="hTotal">0</b><span>إجمالي الموظفين</span></div></div>
+                <div class="card stat"><div class="ico ok"><svg class="i"><use href="#i-check"/></svg></div><div><b id="hActive">0</b><span>على رأس العمل</span></div></div>
+                <div class="card stat"><div class="ico warn"><svg class="i"><use href="#i-calendar-check"/></svg></div><div><b id="hLeave">0</b><span>في إجازة</span></div></div>
+                <div class="card stat"><div class="ico gold"><svg class="i"><use href="#i-briefcase"/></svg></div><div><b id="hDepts">0</b><span>الأقسام</span></div></div>
+            </section>
+            <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-briefcase"/></svg>ملفات الموظفين</h3>
+                    <button class="btn" id="addEmp"><svg class="i"><use href="#i-user-plus"/></svg>إضافة موظف</button>
+                    <button class="btn secondary" id="exportEmp"><svg class="i"><use href="#i-download"/></svg>تصدير CSV</button>
+                </div>
+                <div class="filters">
+                    <div class="field"><label for="hSearch">بحث</label><input type="search" id="hSearch" placeholder="الاسم أو الرقم أو الهوية أو الهاتف"></div>
+                    <div class="field"><label for="hStatus">الحالة</label><select id="hStatus"><option value="">الكل</option><option value="active">على رأس العمل</option><option value="leave">في إجازة</option><option value="terminated">منتهي الخدمة</option></select></div>
+                    <div class="field"><label for="hDept">القسم</label><select id="hDept"></select></div>
+                </div>
+                <div class="table-wrap"><table>
+                    <thead><tr><th>رقم الموظف</th><th>الاسم</th><th>القسم</th><th>المسمى الوظيفي</th><th>تاريخ التعيين</th><th>الحالة</th><th class="no-print"></th></tr></thead>
+                    <tbody id="hrBody"></tbody>
+                </table></div>
+                <div class="alert" id="hrMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="hrMsgText"></span></div>
+            </section>
+        </div>
+
         <!-- الحضور اليومي (مدير) -->
         <div class="panel hidden" data-panel="daily">
             <section class="card">
@@ -103,7 +130,7 @@
         <!-- الموظفون (مدير) -->
         <div class="panel hidden" data-panel="users">
             <section class="card">
-                <div class="card-head"><h3><svg class="i"><use href="#i-users"/></svg>الموظفون</h3></div>
+                <div class="card-head"><h3><svg class="i"><use href="#i-users"/></svg>حسابات المستخدمين</h3></div>
                 <div class="table-wrap"><table>
                     <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الدور</th><th>الحالة</th><th>تعديل الحضور</th><th></th></tr></thead>
                     <tbody id="usersBody"></tbody>
@@ -154,6 +181,55 @@
             </section>
         </div>
     </main>
+
+    <!-- نافذة ملف الموظف -->
+    <dialog id="empDialog" class="wide" aria-labelledby="empTitle">
+        <form method="dialog" id="empForm" novalidate>
+            <h3 id="empTitle">إضافة موظف</h3>
+
+            <h4 class="sec-title">البيانات الشخصية</h4>
+            <div class="form-grid">
+                <div class="field span2"><label for="e_name">الاسم الكامل *</label><input id="e_name" data-f="name" required></div>
+                <div class="field"><label for="e_nationalId">رقم الهوية</label><input id="e_nationalId" data-f="nationalId" dir="ltr" inputmode="numeric"></div>
+                <div class="field"><label for="e_gender">الجنس</label><select id="e_gender" data-f="gender"><option value="">—</option><option>ذكر</option><option>أنثى</option></select></div>
+                <div class="field"><label for="e_birthDate">تاريخ الميلاد</label><input type="date" id="e_birthDate" data-f="birthDate"></div>
+                <div class="field"><label for="e_nationality">الجنسية</label><input id="e_nationality" data-f="nationality"></div>
+                <div class="field"><label for="e_marital">الحالة الاجتماعية</label><select id="e_marital" data-f="marital"><option value="">—</option><option>أعزب</option><option>متزوج</option><option>مطلق</option><option>أرمل</option></select></div>
+            </div>
+
+            <h4 class="sec-title">بيانات الاتصال</h4>
+            <div class="form-grid">
+                <div class="field"><label for="e_phone">الهاتف</label><input id="e_phone" data-f="phone" dir="ltr" inputmode="tel"></div>
+                <div class="field"><label for="e_email">البريد الإلكتروني</label><input type="email" id="e_email" data-f="email" dir="ltr"></div>
+                <div class="field span2"><label for="e_address">العنوان</label><input id="e_address" data-f="address"></div>
+            </div>
+
+            <h4 class="sec-title">البيانات الوظيفية</h4>
+            <div class="form-grid">
+                <div class="field"><label for="e_empNo">رقم الموظف</label><input id="e_empNo" data-f="empNo" dir="ltr" placeholder="يُولَّد تلقائياً"></div>
+                <div class="field"><label for="e_department">القسم</label><input id="e_department" data-f="department" list="deptList"></div>
+                <div class="field"><label for="e_jobTitle">المسمى الوظيفي</label><input id="e_jobTitle" data-f="jobTitle" list="titleList"></div>
+                <div class="field"><label for="e_empType">نوع التوظيف</label><select id="e_empType" data-f="empType"><option value="">—</option><option>دوام كامل</option><option>دوام جزئي</option><option>عقد</option><option>متدرب</option></select></div>
+                <div class="field"><label for="e_hireDate">تاريخ التعيين</label><input type="date" id="e_hireDate" data-f="hireDate"></div>
+                <div class="field"><label for="e_salary">الراتب الأساسي</label><input type="number" id="e_salary" data-f="salary" min="0" step="0.01" dir="ltr"></div>
+                <div class="field"><label for="e_status">الحالة *</label><select id="e_status" data-f="status"><option value="active">على رأس العمل</option><option value="leave">في إجازة</option><option value="terminated">منتهي الخدمة</option></select></div>
+            </div>
+            <datalist id="deptList"></datalist><datalist id="titleList"></datalist>
+
+            <h4 class="sec-title">جهة اتصال للطوارئ</h4>
+            <div class="form-grid">
+                <div class="field"><label for="e_emergencyName">الاسم</label><input id="e_emergencyName" data-f="emergencyName"></div>
+                <div class="field"><label for="e_emergencyPhone">الهاتف</label><input id="e_emergencyPhone" data-f="emergencyPhone" dir="ltr" inputmode="tel"></div>
+            </div>
+            <div class="field" style="margin-top:16px"><label for="e_notes">ملاحظات</label><textarea id="e_notes" data-f="notes" rows="3"></textarea></div>
+
+            <div class="alert" id="empMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="empMsgText"></span></div>
+            <div class="dialog-actions">
+                <button type="button" class="btn secondary" id="empCancel">إلغاء</button>
+                <button type="submit" class="btn">حفظ</button>
+            </div>
+        </form>
+    </dialog>
 
     <!-- نافذة تعديل/إضافة سجل -->
     <dialog id="recDialog" aria-labelledby="recTitle">

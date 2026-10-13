@@ -67,7 +67,18 @@ const Store = (() => {
       edited_at TEXT,
       UNIQUE (user_id, date));
     CREATE INDEX IF NOT EXISTS idx_records_date ON records(date);
-    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`;
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS employees (
+      id TEXT PRIMARY KEY,
+      emp_no TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      national_id TEXT UNIQUE,
+      gender TEXT, birth_date TEXT, nationality TEXT, marital TEXT,
+      phone TEXT, email TEXT, address TEXT,
+      department TEXT, job_title TEXT, emp_type TEXT, hire_date TEXT, salary REAL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','leave','terminated')),
+      emergency_name TEXT, emergency_phone TEXT, notes TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`;
 
   let cfg = { ...DEFAULTS };
   function ensureSchema() {
@@ -127,6 +138,10 @@ const Store = (() => {
   const canEditAttendance = u => !!u && (u.role === 'admin' || u.canEdit === 1);
   const ADMIN_ONLY = 'هذه العملية للمدير فقط';
   const NO_EDIT = 'ليست لديك صلاحية تعديل الحضور';
+  const EMP = `SELECT id, emp_no AS empNo, name, national_id AS nationalId, gender, birth_date AS birthDate, nationality, marital,
+    phone, email, address, department, job_title AS jobTitle, emp_type AS empType, hire_date AS hireDate, salary, status,
+    emergency_name AS emergencyName, emergency_phone AS emergencyPhone, notes FROM employees`;
+  const trim = v => (v == null ? '' : String(v).trim());
   const checkPw = pw => need(pw && pw.length >= 6, 'كلمة المرور يجب ألا تقل عن 6 أحرف');
   const localISO = (date, hhmm) => { const [y, m, d] = date.split('-').map(Number), [h, mi] = hhmm.split(':').map(Number); return new Date(y, m - 1, d, h, mi).toISOString(); };
 
@@ -192,6 +207,51 @@ const Store = (() => {
         need(!(u.role === 'admin' && activeAdmins() <= 1), 'يجب أن يبقى مدير واحد فعّال على الأقل');
       }
       run('UPDATE users SET active = ? WHERE id = ?', [active ? 1 : 0, userId]);
+      return persist();
+    },
+
+    // ---------- ملفات الموظفين (شؤون الموظفين) ----------
+    employees: () => all(`${EMP} ORDER BY emp_no`),
+    nextEmpNo() {
+      const max = all('SELECT emp_no FROM employees').reduce((m, r) => Math.max(m, Number((r.emp_no.match(/\d+$/) || [0])[0])), 0);
+      return 'EMP-' + String(max + 1).padStart(4, '0');
+    },
+    saveEmployee(e) {
+      need(isAdmin(this.currentUser()), ADMIN_ONLY);
+      const f = {};
+      for (const k of ['empNo', 'name', 'nationalId', 'gender', 'birthDate', 'nationality', 'marital', 'phone', 'email', 'address',
+        'department', 'jobTitle', 'empType', 'hireDate', 'status', 'emergencyName', 'emergencyPhone', 'notes']) f[k] = trim(e[k]);
+      need(f.name.length >= 3, 'أدخل الاسم الكامل للموظف');
+      need(['active', 'leave', 'terminated'].includes(f.status), 'اختر حالة الموظف');
+      need(!f.email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email), 'البريد الإلكتروني غير صحيح');
+      need(!f.phone || /^[+\d][\d\s-]{6,19}$/.test(f.phone), 'رقم الهاتف غير صحيح');
+      need(!f.emergencyPhone || /^[+\d][\d\s-]{6,19}$/.test(f.emergencyPhone), 'رقم هاتف الطوارئ غير صحيح');
+      for (const k of ['birthDate', 'hireDate']) need(!f[k] || /^\d{4}-\d\d-\d\d$/.test(f[k]), 'تاريخ غير صحيح');
+      const today = dateKey(new Date());
+      need(!f.birthDate || f.birthDate < today, 'تاريخ الميلاد يجب أن يكون في الماضي');
+      need(!f.birthDate || !f.hireDate || f.hireDate > f.birthDate, 'تاريخ التعيين يجب أن يكون بعد تاريخ الميلاد');
+      const salary = trim(e.salary) === '' ? null : Number(e.salary);
+      need(salary === null || (Number.isFinite(salary) && salary >= 0), 'الراتب يجب أن يكون رقماً موجباً');
+      if (!f.empNo) f.empNo = this.nextEmpNo();
+      const id = e.id || null;
+      const dupNo = all('SELECT id FROM employees WHERE emp_no = ?', [f.empNo])[0];
+      need(!dupNo || dupNo.id === id, 'رقم الموظف مستخدم مسبقاً');
+      if (f.nationalId) {
+        const dupId = all('SELECT id FROM employees WHERE national_id = ?', [f.nationalId])[0];
+        need(!dupId || dupId.id === id, 'رقم الهوية مسجّل لموظف آخر');
+      }
+      const now = new Date().toISOString();
+      const vals = [f.empNo, f.name, f.nationalId || null, f.gender, f.birthDate, f.nationality, f.marital, f.phone, f.email, f.address,
+        f.department, f.jobTitle, f.empType, f.hireDate, salary, f.status, f.emergencyName, f.emergencyPhone, f.notes];
+      if (id) run(`UPDATE employees SET emp_no=?, name=?, national_id=?, gender=?, birth_date=?, nationality=?, marital=?, phone=?, email=?, address=?,
+        department=?, job_title=?, emp_type=?, hire_date=?, salary=?, status=?, emergency_name=?, emergency_phone=?, notes=?, updated_at=? WHERE id=?`, [...vals, now, id]);
+      else run(`INSERT INTO employees (emp_no, name, national_id, gender, birth_date, nationality, marital, phone, email, address, department, job_title,
+        emp_type, hire_date, salary, status, emergency_name, emergency_phone, notes, id, created_at, updated_at) VALUES (${'?,'.repeat(21)}?)`, [...vals, uid(), now, now]);
+      return persist();
+    },
+    deleteEmployee(id) {
+      need(isAdmin(this.currentUser()), ADMIN_ONLY);
+      run('DELETE FROM employees WHERE id = ?', [id]);
       return persist();
     },
 

@@ -109,6 +109,59 @@ function renderMine() {
   renderChart(rows);
 }
 
+// ---------- شؤون الموظفين (مدير) ----------
+const EMP_STATUS = { active: ['على رأس العمل', ''], leave: ['في إجازة', 'late'], terminated: ['منتهي الخدمة', 'off'] };
+const uniq = list => [...new Set(list.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ar'));
+let empCache = [];
+
+function filteredEmployees() {
+  const q = $('hSearch').value.trim().toLowerCase(), st = $('hStatus').value, dp = $('hDept').value;
+  return empCache.filter(e => (!st || e.status === st) && (!dp || e.department === dp) &&
+    (!q || [e.name, e.empNo, e.nationalId, e.phone, e.email].some(v => String(v || '').toLowerCase().includes(q))));
+}
+function renderHr() {
+  empCache = Store.employees();
+  $('hTotal').textContent = empCache.length;
+  $('hActive').textContent = empCache.filter(e => e.status === 'active').length;
+  $('hLeave').textContent = empCache.filter(e => e.status === 'leave').length;
+  const depts = uniq(empCache.map(e => e.department));
+  $('hDepts').textContent = depts.length;
+  const sel = $('hDept'), keep = sel.value;
+  sel.replaceChildren(new Option('الكل', ''), ...depts.map(d => new Option(d, d)));
+  sel.value = depts.includes(keep) ? keep : '';
+  $('deptList').replaceChildren(...depts.map(d => new Option(d)));
+  $('titleList').replaceChildren(...uniq(empCache.map(e => e.jobTitle)).map(t => new Option(t)));
+  const rows = filteredEmployees();
+  fillRows($('hrBody'), rows, (tr, e) => {
+    numCell(tr, e.empNo);
+    const td = cell(tr, e.name); if (e.phone) { const sub = document.createElement('span'); sub.className = 'cell-sub num'; sub.textContent = e.phone; td.appendChild(sub); }
+    cell(tr, e.department || '—'); cell(tr, e.jobTitle || '—'); numCell(tr, e.hireDate || '—');
+    badgeCell(tr, EMP_STATUS[e.status][0], EMP_STATUS[e.status][1]);
+    actionsCell(tr,
+      iconBtn('pencil', 'تعديل بيانات الموظف', () => openEmpDialog(e)),
+      iconBtn('trash', 'حذف الموظف', async () => {
+        hideAlert('hrMsg');
+        if (!confirm(`حذف ملف الموظف «${e.name}» نهائياً؟ للاحتفاظ بالسجل يمكنك تغيير حالته إلى «منتهي الخدمة» بدلاً من الحذف.`)) return;
+        try { await Store.deleteEmployee(e.id); renderHr(); } catch (err) { showAlert('hrMsg', err.message); }
+      }, true));
+  }, empCache.length ? 'لا توجد نتائج مطابقة للبحث' : 'لا يوجد موظفون بعد. ابدأ بإضافة أول موظف', 7);
+}
+function openEmpDialog(emp) {
+  hideAlert('empMsg');
+  $('empForm').reset();
+  $('empForm').dataset.id = emp ? emp.id : '';
+  $('empTitle').textContent = emp ? `تعديل بيانات ${emp.name}` : 'إضافة موظف';
+  document.querySelectorAll('#empForm [data-f]').forEach(el => { el.value = emp ? (emp[el.dataset.f] ?? '') : (el.dataset.f === 'status' ? 'active' : ''); });
+  if (!emp) $('e_empNo').placeholder = Store.nextEmpNo();
+  $('empDialog').showModal();
+  $('e_name').focus();
+}
+function employeeFromForm() {
+  const e = { id: $('empForm').dataset.id || undefined };
+  document.querySelectorAll('#empForm [data-f]').forEach(el => { e[el.dataset.f] = el.value; });
+  return e;
+}
+
 // ---------- الحضور اليومي (مدير) ----------
 function renderAdmin() {
   const names = userNames();
@@ -187,7 +240,7 @@ function renderSettings() {
 }
 
 // ---------- التبويبات ----------
-const RENDER = { me: () => { renderToday(); renderMine(); }, daily: renderAdmin, report: renderReport, users: renderUsers, settings: renderSettings };
+const RENDER = { hr: renderHr, me: () => { renderToday(); renderMine(); }, daily: renderAdmin, report: renderReport, users: renderUsers, settings: renderSettings };
 function showTab(name) {
   if (!RENDER[name] || (name !== 'me' && !(me.role === 'admin' || (name === 'daily' && Store.canEditAttendance(me))))) name = 'me';
   document.querySelectorAll('[data-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== name));
@@ -258,6 +311,19 @@ function init() {
   if (me.role === 'admin') {
     document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('hidden'));
 
+    // شؤون الموظفين
+    $('addEmp').onclick = () => openEmpDialog(null);
+    $('empCancel').onclick = () => $('empDialog').close();
+    $('empForm').onsubmit = async e => {
+      e.preventDefault(); hideAlert('empMsg');
+      try { await Store.saveEmployee(employeeFromForm()); $('empDialog').close(); renderHr(); }
+      catch (err) { showAlert('empMsg', err.message); $('empDialog').scrollTo({ top: $('empDialog').scrollHeight }); }
+    };
+    ['hSearch', 'hStatus', 'hDept'].forEach(id => $(id).addEventListener('input', renderHr));
+    $('exportEmp').onclick = () => downloadCsv(`employees-${Store.dateKey(new Date())}.csv`,
+      [['رقم الموظف', 'الاسم', 'الهوية', 'الجنس', 'تاريخ الميلاد', 'الجنسية', 'الحالة الاجتماعية', 'الهاتف', 'البريد', 'العنوان', 'القسم', 'المسمى الوظيفي', 'نوع التوظيف', 'تاريخ التعيين', 'الحالة']]
+        .concat(filteredEmployees().map(x => [x.empNo, x.name, x.nationalId, x.gender, x.birthDate, x.nationality, x.marital, x.phone, x.email, x.address, x.department, x.jobTitle, x.empType, x.hireDate, EMP_STATUS[x.status][0]])));
+
     $('exportReport').onclick = () => downloadCsv(`report-${$('reportMonth').value}.csv`, [['الموظف', 'أيام الدوام', 'الحضور', 'الغياب', 'التأخير', 'ساعات العمل']]
       .concat(Store.report($('reportMonth').value).map(r => [r.name, r.workingDays, r.present, r.absent, r.late, r.hours.toFixed(1)])));
     $('printReport').onclick = () => window.print();
@@ -301,7 +367,7 @@ function init() {
   }
 
   tickClock(); setInterval(tickClock, 1000);
-  showTab(location.hash.slice(1) || 'me');
+  showTab(location.hash.slice(1) || (me.role === 'admin' ? 'hr' : 'me'));
 }
 
 skeleton($('myBody'));
