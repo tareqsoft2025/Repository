@@ -32,11 +32,17 @@ function badgeCell(tr, text, cls = '') {
 function statusCell(tr, rec) {
   const late = Store.isLate(rec);
   badgeCell(tr, late ? 'متأخر' : rec.checkOut ? 'حاضر' : 'داخل العمل', (!rec.checkOut ? 'open ' : '') + (late ? 'late' : ''));
+  if (rec.editedBy) { // سجل عُدّل يدوياً: يظهر من عدّله ومتى
+    const b = document.createElement('span'), names = userNames();
+    b.className = 'badge off'; b.style.marginInlineStart = '6px'; b.textContent = 'معدّل';
+    b.title = `عُدّل بواسطة ${names[rec.editedBy] || '؟'} — ${new Date(rec.editedAt).toLocaleString(LOCALE)}`;
+    tr.lastChild.appendChild(b);
+  }
 }
-function iconBtn(name, title, onClick, danger) {
+function iconBtn(name, title, onClick, danger, disabled = false) {
   const b = document.createElement('button');
   b.type = 'button'; b.className = 'icon-btn' + (danger ? ' danger' : ''); b.title = title; b.setAttribute('aria-label', title);
-  b.innerHTML = icon(name); b.onclick = onClick; return b;
+  b.innerHTML = icon(name); b.onclick = onClick; b.disabled = disabled; return b;
 }
 function actionsCell(tr, ...btns) {
   const td = document.createElement('td'), d = document.createElement('div');
@@ -119,7 +125,7 @@ function renderAdmin() {
 function openRecDialog(rec) {
   hideAlert('recMsg');
   const sel = $('recUser'); sel.replaceChildren();
-  Store.users().filter(u => u.active || (rec && u.id === rec.userId)).forEach(u => sel.add(new Option(u.name, u.id)));
+  Store.users().filter(u => (u.active || (rec && u.id === rec.userId)) && (me.role === 'admin' || u.id !== me.id)).forEach(u => sel.add(new Option(u.name, u.id)));
   $('recTitle').textContent = rec ? 'تعديل سجل' : 'إضافة سجل يدوي';
   $('recForm').dataset.id = rec ? rec.id : '';
   sel.value = rec ? rec.userId : sel.options[0]?.value;
@@ -146,13 +152,18 @@ function renderUsers() {
     cell(tr, u.name); numCell(tr, u.username);
     badgeCell(tr, u.role === 'admin' ? 'مدير' : 'موظف', u.role === 'admin' ? 'admin' : 'off');
     badgeCell(tr, u.active ? 'فعّال' : 'معطّل', u.active ? '' : 'bad');
+    badgeCell(tr, u.role === 'admin' ? 'كاملة' : u.canEdit ? 'مسموح' : 'غير مسموح', u.role === 'admin' ? 'admin' : u.canEdit ? '' : 'off');
     actionsCell(tr,
+      u.role === 'admin' ? iconBtn('pencil', 'المدير يملك صلاحية التعديل دائماً', null, false, true) : iconBtn('pencil', u.canEdit ? 'سحب صلاحية تعديل الحضور' : 'منح صلاحية تعديل الحضور', async () => {
+        hideAlert('usersMsg');
+        try { await Store.setCanEdit(u.id, !u.canEdit); renderUsers(); } catch (e) { showAlert('usersMsg', e.message); }
+      }, !!u.canEdit),
       iconBtn('key', 'إعادة تعيين كلمة المرور', () => openPwDialog(u)),
       iconBtn(u.active ? 'ban' : 'check', u.active ? 'تعطيل الحساب' : 'تفعيل الحساب', async () => {
         hideAlert('usersMsg');
         try { await Store.setActive(u.id, !u.active); renderUsers(); } catch (e) { showAlert('usersMsg', e.message); }
       }, u.active));
-  }, 'لا يوجد مستخدمون');
+  }, 'لا يوجد مستخدمون', 6);
 }
 function openPwDialog(user) {
   const self = user.id === me.id;
@@ -178,7 +189,7 @@ function renderSettings() {
 // ---------- التبويبات ----------
 const RENDER = { me: () => { renderToday(); renderMine(); }, daily: renderAdmin, report: renderReport, users: renderUsers, settings: renderSettings };
 function showTab(name) {
-  if (!RENDER[name] || (name !== 'me' && me.role !== 'admin')) name = 'me';
+  if (!RENDER[name] || (name !== 'me' && !(me.role === 'admin' || (name === 'daily' && Store.canEditAttendance(me))))) name = 'me';
   document.querySelectorAll('[data-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== name));
   document.querySelectorAll('[data-tab]').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
   history.replaceState(null, '', '#' + name);
@@ -223,8 +234,8 @@ function init() {
     } catch (err) { showAlert('pwMsg', err.message); }
   };
 
-  if (me.role === 'admin') {
-    document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('hidden'));
+  if (Store.canEditAttendance(me)) {
+    document.querySelectorAll('.edit-only').forEach(el => el.classList.remove('hidden'));
 
     // سجل يدوي
     $('addRecord').onclick = () => openRecDialog(null);
@@ -237,12 +248,16 @@ function init() {
       } catch (err) { showAlert('recMsg', err.message); }
     };
 
-    // تصدير
     $('exportCsv').onclick = () => {
       const names = userNames();
       downloadCsv(`attendance-${$('adminDate').value}.csv`, [['الموظف', 'التاريخ', 'الحضور', 'الانصراف', 'الساعات']]
         .concat(Store.recordsOn($('adminDate').value).map(r => [names[r.userId] || '', r.date, fmtTime(r.checkIn), fmtTime(r.checkOut), fmtHours(Store.hours(r))])));
     };
+  }
+
+  if (me.role === 'admin') {
+    document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('hidden'));
+
     $('exportReport').onclick = () => downloadCsv(`report-${$('reportMonth').value}.csv`, [['الموظف', 'أيام الدوام', 'الحضور', 'الغياب', 'التأخير', 'ساعات العمل']]
       .concat(Store.report($('reportMonth').value).map(r => [r.name, r.workingDays, r.present, r.absent, r.late, r.hours.toFixed(1)])));
     $('printReport').onclick = () => window.print();

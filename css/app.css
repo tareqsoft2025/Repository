@@ -142,6 +142,8 @@ tbody tr:has(.empty):hover { background: transparent; }
 /* ===== Row actions, icon buttons ===== */
 .icon-btn { display: inline-grid; place-items: center; width: 32px; height: 32px; border: 1px solid transparent; border-radius: var(--radius-sm); background: none; color: var(--text-muted); cursor: pointer; transition: background .15s var(--ease), color .15s var(--ease); }
 .icon-btn:hover { background: var(--primary-tint); color: var(--primary); }
+.icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+.icon-btn:disabled:hover { background: none; color: var(--text-muted); }
 .icon-btn.danger:hover { background: var(--danger-tint); color: var(--danger-ink); }
 .icon-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .icon-btn .i { width: 18px; height: 18px; }
