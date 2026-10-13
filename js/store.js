@@ -1,7 +1,16 @@
 // طبقة التخزين: قاعدة بيانات SQLite (sql.js) داخل المتصفح، تُحفظ في IndexedDB
 // ويمكن تصديرها/استيرادها كملف .sqlite. اعتمد على: await Store.ready قبل أي استخدام.
 const Store = (() => {
-  const DEFAULTS = { workStart: '09:00', workEnd: '17:00', graceMin: '0', weekend: '5,6' }; // 5,6 = الجمعة والسبت
+  const CURRENCIES = { ILS: 'شيكل (₪)', USD: 'دولار أمريكي ($)', JOD: 'دينار أردني', EUR: 'يورو (€)', SAR: 'ريال سعودي' };
+  const DEFAULT_TERMS = [
+    'يلتزم الطرف الثاني بأداء المهام الموكلة إليه وفق وصف العمل المبيّن في هذا العقد، وبتعليمات المشرف المباشر.',
+    'يلتزم الطرف الثاني بالمحافظة على سرية المعلومات وعلى ممتلكات الطرف الأول وأدواته.',
+    'يلتزم الطرف الثاني بأوقات الدوام الرسمية ولوائح العمل المعتمدة لدى الطرف الأول.',
+    'يجوز لأي من الطرفين إنهاء هذا العقد بإشعار خطي مسبق وفق الأنظمة والقوانين المعمول بها.',
+    'تُطبَّق الأنظمة والقوانين السارية على كل ما لم يرد فيه نص في هذا العقد.',
+  ].join('\n');
+  const DEFAULTS = { workStart: '09:00', workEnd: '17:00', graceMin: '0', weekend: '5,6', // 5,6 = الجمعة والسبت
+    orgName: 'الجهة المتعاقدة', currency: 'ILS', contractTerms: DEFAULT_TERMS };
   const IDB_NAME = 'attendance', IDB_STORE = 'files', IDB_KEY = 'db';
   const SCRIPT_BASE = document.currentScript.src.replace(/store\.js(\?.*)?$/, '');
   let SQL, db;
@@ -95,6 +104,9 @@ const Store = (() => {
       job_title TEXT,
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','cancelled')),
       notes TEXT,
+      issue_date TEXT, grade_id TEXT, grade_step INTEGER, currency TEXT NOT NULL DEFAULT 'ILS',
+      project_code TEXT, project_name TEXT, project_name_en TEXT, supervisor_id TEXT,
+      work_desc TEXT, work_desc_en TEXT, inclusions TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_contracts_emp ON contracts(employee_id);
     CREATE TABLE IF NOT EXISTS qualifications (
@@ -153,6 +165,8 @@ const Store = (() => {
     addCol('employees', 'name_en', 'TEXT');
     addCol('employees', 'birth_place', 'TEXT');
     addCol('contracts', 'pay_basis', "TEXT NOT NULL DEFAULT 'monthly'");
+    for (const [c, ddl] of [['issue_date', 'TEXT'], ['grade_id', 'TEXT'], ['grade_step', 'INTEGER'], ['currency', "TEXT NOT NULL DEFAULT 'ILS'"], ['project_code', 'TEXT'],
+      ['project_name', 'TEXT'], ['project_name_en', 'TEXT'], ['supervisor_id', 'TEXT'], ['work_desc', 'TEXT'], ['work_desc_en', 'TEXT'], ['inclusions', 'TEXT']]) addCol('contracts', c, ddl);
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_emp_user ON employees(user_id) WHERE user_id IS NOT NULL');
     backfillCatalogs();
     cfg = { ...DEFAULTS };
@@ -213,7 +227,9 @@ const Store = (() => {
   const seqCommit = (key, n) => run('INSERT OR REPLACE INTO settings VALUES (?,?)', [key, String(n)]);
   const NO_HR = 'ليست لديك صلاحية الموارد البشرية';
   const CONTRACT = `SELECT id, contract_no AS contractNo, employee_id AS employeeId, type, pay_basis AS payBasis, start_date AS startDate, end_date AS endDate,
-    basic_salary AS basicSalary, allowances, job_title AS jobTitle, status, notes FROM contracts`;
+    basic_salary AS basicSalary, allowances, job_title AS jobTitle, status, notes, issue_date AS issueDate, grade_id AS gradeId, grade_step AS gradeStep, currency,
+    project_code AS projectCode, project_name AS projectName, project_name_en AS projectNameEn, supervisor_id AS supervisorId, work_desc AS workDesc,
+    work_desc_en AS workDescEn, inclusions FROM contracts`;
   const FAR = '9999-12-31';
   const CONTRACT_TYPES = ['دائم', 'محدد المدة', 'تجريبي', 'موسمي', 'دوام جزئي'];
   const PAY_BASES = ['monthly', 'daily', 'volunteer']; // شهري / يومي / متطوع
@@ -250,7 +266,12 @@ const Store = (() => {
       need(toMin(next.workEnd) > toMin(next.workStart), 'وقت نهاية الدوام يجب أن يكون بعد وقت البداية');
       const grace = Number(next.graceMin);
       need(Number.isInteger(grace) && grace >= 0 && grace <= 120, 'مهلة التأخير بين 0 و120 دقيقة');
-      const merged = { workStart: next.workStart, workEnd: next.workEnd, graceMin: String(grace), weekend: next.weekend };
+      const orgName = next.orgName === undefined ? cfg.orgName : trim(next.orgName), currency = next.currency === undefined ? cfg.currency : trim(next.currency);
+      const terms = next.contractTerms === undefined ? cfg.contractTerms : String(next.contractTerms).trim();
+      need(orgName.length >= 2 && orgName.length <= 120, 'أدخل اسم الجهة المتعاقدة (2 إلى 120 حرفاً)');
+      need(CURRENCIES[currency], 'اختر عملة صحيحة');
+      need(terms.length <= 4000, 'نص بنود العقد طويل جداً (الحد 4000 حرف)');
+      const merged = { workStart: next.workStart, workEnd: next.workEnd, graceMin: String(grace), weekend: next.weekend, orgName, currency, contractTerms: terms };
       for (const [k, v] of Object.entries(merged)) run('INSERT OR REPLACE INTO settings VALUES (?,?)', [k, v]);
       cfg = merged;
       return persist();
@@ -504,7 +525,21 @@ const Store = (() => {
     },
 
     // ---------- العقود ----------
-    contractTypes: CONTRACT_TYPES, payBases: PAY_BASES,
+    contractTypes: CONTRACT_TYPES, payBases: PAY_BASES, currencies: CURRENCIES,
+    // بيانات مستند العقد للطباعة: للموارد البشرية أو لصاحب العقد نفسه
+    contractDocument(id) {
+      const me = this.currentUser();
+      need(me && !me.mustChange, MUST_CHANGE);
+      const c = all(`${CONTRACT} WHERE id = ?`, [id])[0];
+      need(c, 'العقد غير موجود');
+      const e = all(`${EMP} WHERE id = ?`, [c.employeeId])[0];
+      need(canHr(me) || (e && e.userId === me.id), NO_HR);
+      const grade = c.gradeId ? all('SELECT code, name, min_salary AS min, max_salary AS max, increment FROM salary_grades WHERE id = ?', [c.gradeId])[0] || null : null;
+      const sup = c.supervisorId ? all('SELECT name, name_en AS nameEn FROM employees WHERE id = ?', [c.supervisorId])[0] || null : null;
+      const dept = e?.departmentId ? all('SELECT name FROM departments WHERE id = ?', [e.departmentId])[0]?.name || '' : '';
+      return { contract: c, employee: e, grade, supervisor: sup, department: dept, org: cfg.orgName, terms: cfg.contractTerms,
+        workStart: cfg.workStart, workEnd: cfg.workEnd, currencyLabel: CURRENCIES[c.currency] || c.currency, status: this.contractStatus(c) };
+    },
     contracts() { need(canHr(this.currentUser()), NO_HR); return all(`${CONTRACT} ORDER BY start_date DESC, contract_no DESC`); },
     nextContractNo: () => 'CNT-' + String(seqNext('seq_contracts', 'contracts', 'contract_no')).padStart(4, '0'),
     // الحالة المحسوبة: cancelled | upcoming | expired | expiring (خلال 30 يوماً) | active
@@ -518,7 +553,7 @@ const Store = (() => {
       }
       return 'active';
     },
-    saveContract(c) {
+    async saveContract(c) {
       const actor = this.currentUser();
       need(canHr(actor), NO_HR);
       const id = c.id || null, empId = trim(c.employeeId);
@@ -549,13 +584,49 @@ const Store = (() => {
           [empId, id || '', end || FAR, FAR, start])[0];
         need(!clash, 'يتداخل هذا العقد مع عقد آخر ساري لنفس الموظف');
       }
+      // تاريخ التحرير والعملة
+      const issue = trim(c.issueDate) || dateKey(new Date());
+      need(/^\d{4}-\d\d-\d\d$/.test(issue), 'تاريخ تحرير العقد غير صحيح');
+      const currency = trim(c.currency) || cfg.currency;
+      need(CURRENCIES[currency], 'اختر عملة صحيحة');
+      // سلم الرواتب (للعقود الشهرية): الدرجة والخطوة
+      let gradeId = null, gradeStep = null;
+      if (payBasis === 'monthly' && trim(c.gradeId)) {
+        gradeId = trim(c.gradeId);
+        const g = all('SELECT min_salary AS min, max_salary AS max, increment FROM salary_grades WHERE id = ?', [gradeId])[0];
+        need(g, 'الدرجة غير موجودة');
+        if (trim(c.gradeStep) !== '') {
+          gradeStep = Number(c.gradeStep);
+          need(Number.isInteger(gradeStep) && gradeStep >= 1, 'رقم الخطوة يجب أن يكون عدداً صحيحاً موجباً');
+          need(!g.increment || gradeStep <= Math.floor((g.max - g.min) / g.increment) + 1, 'الخطوة تتجاوز عدد خطوات الدرجة');
+        }
+      }
+      // بيانات المشروع (لعقود العمال اليوميين والمتطوعين)
+      let pr = { code: '', name: '', nameEn: '', supervisor: null, desc: '', descEn: '' };
+      if (payBasis !== 'monthly') {
+        pr = { code: trim(c.projectCode), name: trim(c.projectName), nameEn: trim(c.projectNameEn), supervisor: trim(c.supervisorId) || null, desc: trim(c.workDesc), descEn: trim(c.workDescEn) };
+        need(pr.name, 'أدخل اسم المشروع');
+        need(pr.supervisor, 'اختر المشرف');
+        const sup = all('SELECT status FROM employees WHERE id = ?', [pr.supervisor])[0];
+        need(sup, 'المشرف غير موجود');
+        need(pr.supervisor !== empId, 'لا يمكن أن يكون المشرف هو صاحب العقد نفسه');
+        need(sup.status !== 'terminated', 'لا يمكن إسناد الإشراف لموظف منتهي الخدمة');
+        need(pr.desc, 'أدخل وصف العمل');
+      }
+      const inclusions = trim(c.inclusions);
+      need(inclusions.length <= 2000, 'نص «شمول العقد» طويل جداً');
       const now = new Date().toISOString(), job = trim(c.jobTitle), notes = trim(c.notes);
-      if (id) run('UPDATE contracts SET contract_no=?, employee_id=?, type=?, pay_basis=?, start_date=?, end_date=?, basic_salary=?, allowances=?, job_title=?, status=?, notes=?, updated_at=? WHERE id=?',
-        [no, empId, type, payBasis, start, end || null, basic, allow, job, status, notes, now, id]);
-      else run('INSERT INTO contracts (id, contract_no, employee_id, type, pay_basis, start_date, end_date, basic_salary, allowances, job_title, status, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        [uid(), no, empId, type, payBasis, start, end || null, basic, allow, job, status, notes, now, now]);
+      const cid = id || uid();
+      const extra = [issue, gradeId, gradeStep, currency, pr.code, pr.name, pr.nameEn, pr.supervisor, pr.desc, pr.descEn, inclusions];
+      if (id) run(`UPDATE contracts SET contract_no=?, employee_id=?, type=?, pay_basis=?, start_date=?, end_date=?, basic_salary=?, allowances=?, job_title=?, status=?, notes=?,
+        issue_date=?, grade_id=?, grade_step=?, currency=?, project_code=?, project_name=?, project_name_en=?, supervisor_id=?, work_desc=?, work_desc_en=?, inclusions=?, updated_at=? WHERE id=?`,
+        [no, empId, type, payBasis, start, end || null, basic, allow, job, status, notes, ...extra, now, id]);
+      else run(`INSERT INTO contracts (id, contract_no, employee_id, type, pay_basis, start_date, end_date, basic_salary, allowances, job_title, status, notes,
+        issue_date, grade_id, grade_step, currency, project_code, project_name, project_name_en, supervisor_id, work_desc, work_desc_en, inclusions, created_at, updated_at) VALUES (${'?,'.repeat(24)}?)`,
+        [cid, no, empId, type, payBasis, start, end || null, basic, allow, job, status, notes, ...extra, now, now]);
       if (!id) seqCommit('seq_contracts', Number(no.match(/\d+$/)[0]));
-      return persist();
+      await persist();
+      return { id: cid };
     },
     deleteContract(id) {
       const actor = this.currentUser();

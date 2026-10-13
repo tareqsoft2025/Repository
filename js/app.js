@@ -94,7 +94,7 @@ function fact(label, value) {
 }
 function renderMyContract() {
   const box = $('myContract'), el = Store.attendanceEligibility(me.id), cs = Store.myContracts(), emp = Store.employeeOfUser(me.id);
-  box.replaceChildren();
+  box.replaceChildren(); $('printMine').classList.add('hidden');
   $('contractCard').classList.toggle('hidden', !!el.exempt && !cs.length); // حساب إدارة بلا ملف موظف: لا بطاقة
   if (!cs.length) { // لا عقد: تُشرح النتيجة
     box.innerHTML = '<div class="notice bad">' + icon('alert') + '<span></span></div>';
@@ -102,6 +102,7 @@ function renderMyContract() {
     return;
   }
   const cur = el.contract || cs.find(c => c.status === 'active') || cs[0], st = Store.contractStatus(cur);
+  $('printMine').classList.remove('hidden'); $('printMine').onclick = () => printContract(cur.id);
   const head = document.createElement('div'); head.className = 'contract-head';
   const no = document.createElement('span'); no.className = 'no'; no.textContent = cur.contractNo;
   const badge = document.createElement('span'); badge.className = 'badge ' + CT_STATUS[st][1]; badge.textContent = CT_STATUS[st][0];
@@ -130,7 +131,7 @@ function renderMyContract() {
     const wrap = document.createElement('div'), table = document.createElement('table'), tb = document.createElement('tbody');
     wrap.className = 'table-wrap'; table.innerHTML = '<thead><tr><th>الرقم</th><th>المدة</th><th>نوع الأجر</th><th>الفترة</th><th>الحالة</th></tr></thead>';
     others.forEach(c => { const tr = document.createElement('tr'), s2 = Store.contractStatus(c);
-      numCell(tr, c.contractNo); cell(tr, c.type); cell(tr, PAY_LABEL[c.payBasis]); numCell(tr, `${c.startDate} → ${c.endDate || 'غير محدد'}`); badgeCell(tr, CT_STATUS[s2][0], CT_STATUS[s2][1]); tb.appendChild(tr); });
+      numCell(tr, c.contractNo); cell(tr, c.type); cell(tr, PAY_LABEL[c.payBasis]); periodCell(tr, c.startDate, c.endDate); badgeCell(tr, CT_STATUS[s2][0], CT_STATUS[s2][1]); tb.appendChild(tr); });
     table.appendChild(tb); wrap.appendChild(table); box.appendChild(wrap);
   }
 }
@@ -363,33 +364,72 @@ async function employeeFromForm() {
 // ---------- العقود (موارد بشرية) ----------
 const CT_STATUS = { active: ['ساري', ''], expiring: ['ينتهي قريباً', 'late'], upcoming: ['لم يبدأ', 'open'], expired: ['منتهي', 'bad'], cancelled: ['ملغى', 'off'] };
 const money = n => Number(n).toLocaleString(LOCALE, { maximumFractionDigits: 2 });
+const PAY_LABEL = { monthly: 'شهري', daily: 'يومي', volunteer: 'متطوع' };
+const KIND = { monthly: { tab: 'عقود موظفين', one: 'عقد موظف', who: 'الموظف' }, daily: { tab: 'عقود يومي', one: 'عقد يومي', who: 'العامل' }, volunteer: { tab: 'عقود متطوعين', one: 'عقد متطوع', who: 'المتطوع' } };
+let ctTab = 'monthly', ctTodayOnly = false;
 let ctCache = [], ctEmps = {}, ctGrades = {};
+const addDays = (date, n) => { const d = new Date(date + 'T00:00:00'); d.setDate(d.getDate() + n); return Store.dateKey(d); };
+// عقد اليوم: فعّال وتاريخ اليوم داخل مدته
+const validToday = c => { const t = Store.dateKey(new Date()); return c.status === 'active' && c.startDate <= t && (!c.endDate || c.endDate >= t); };
+const printContract = id => window.open(`print.html?id=${encodeURIComponent(id)}&print=1`, '_blank');
 
 function filteredContracts() {
   const q = $('cSearch').value.trim().toLowerCase(), st = $('cStatus').value;
-  return ctCache.filter(c => (!st || Store.contractStatus(c) === st) && (!q || `${c.contractNo} ${ctEmps[c.employeeId]?.name || ''}`.toLowerCase().includes(q)));
+  return ctCache.filter(c => c.payBasis === ctTab && (!st || Store.contractStatus(c) === st) && (!ctTodayOnly || validToday(c)) &&
+    (!q || `${c.contractNo} ${ctEmps[c.employeeId]?.name || ''} ${c.projectName} ${c.projectCode}`.toLowerCase().includes(q)));
+}
+const CT_HEAD = {
+  monthly: ['رقم العقد', 'الموظف', 'المنصب والقسم', 'الدرجة', 'الفترة', 'الراتب الإجمالي', 'الحالة'],
+  daily: ['رقم العقد', 'العامل', 'المشروع', 'المشرف', 'الفترة', 'الأجر اليومي', 'الحالة'],
+  volunteer: ['رقم العقد', 'المتطوع', 'المشروع', 'المشرف', 'الفترة', 'الحالة'],
+};
+// الفترة: «من ... إلى ...» مع تاريخين بعرض ثابت من اليسار لليمين (يمنع انعكاس الترتيب في النص العربي)
+function periodCell(tr, start, end) {
+  const td = document.createElement('td'), d = t => { const sp = document.createElement('span'); sp.className = 'num'; sp.textContent = t; return sp; };
+  td.append('من ', d(start), ' إلى ', end ? d(end) : 'غير محدد'); tr.appendChild(td); return td;
+}
+function subCell(tr, main, sub, cls) {
+  const td = cell(tr, main, cls);
+  if (sub) { const sp = document.createElement('span'); sp.className = 'cell-sub'; sp.textContent = sub; td.appendChild(sp); }
+  return td;
 }
 function renderContracts() {
   hideAlert('contractsMsg');
   ctCache = Store.contracts();
-  ctEmps = Object.fromEntries(Store.employees().map(e => [e.id, e]));
-  ctGrades = Object.fromEntries(Object.keys(ctEmps).map(id => [id, Store.gradeRange(id)]));
-  const count = k => ctCache.filter(c => Store.contractStatus(c) === k).length;
-  $('cTotal').textContent = ctCache.length;
-  $('cActive').textContent = count('active') + count('expiring');
-  $('cExpiring').textContent = count('expiring');
-  $('cExpired').textContent = count('expired');
+  const emps = Store.employees(), grades = Object.fromEntries(Store.grades().map(g => [g.id, g]));
+  ctEmps = Object.fromEntries(emps.map(e => [e.id, e]));
+  ctGrades = Object.fromEntries(emps.map(e => [e.id, Store.gradeRange(e.id)]));
+  // تبويبات الأنواع مع العدّادات
+  const by = k => ctCache.filter(c => c.payBasis === k);
+  $('cnMonthly').textContent = by('monthly').length; $('cnDaily').textContent = by('daily').length; $('cnVolunteer').textContent = by('volunteer').length;
+  document.querySelectorAll('[data-ct]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.ct === ctTab)));
+  $('addContractLbl').textContent = 'إضافة ' + KIND[ctTab].one;
+  // بطاقات الإحصاء للتبويب الحالي
+  const mine = by(ctTab), count = k => mine.filter(c => Store.contractStatus(c) === k).length;
+  $('cTotalLbl').textContent = 'إجمالي ' + KIND[ctTab].tab; $('cTotal').textContent = mine.length;
+  $('cToday').textContent = mine.filter(validToday).length;
+  $('cExpiring').textContent = count('expiring'); $('cExpired').textContent = count('expired');
+  $('cTodayOnly').setAttribute('aria-pressed', String(ctTodayOnly));
+  // رأس الجدول بحسب النوع
+  const tr0 = document.createElement('tr');
+  [...CT_HEAD[ctTab], ''].forEach((h, i, a) => { const th = document.createElement('th'); th.textContent = h; if (i === a.length - 1) th.className = 'no-print'; tr0.appendChild(th); });
+  $('contractsHead').replaceChildren(tr0);
   fillRows($('contractsBody'), filteredContracts(), (tr, c) => {
-    const st = Store.contractStatus(c);
-    numCell(tr, c.contractNo); cell(tr, ctEmps[c.employeeId]?.name || '؟');
-    const tdType = cell(tr, c.type), chip = document.createElement('span');
-    chip.className = 'chip' + (c.payBasis === 'volunteer' ? ' gold' : ''); chip.style.marginInlineStart = '6px'; chip.textContent = PAY_LABEL[c.payBasis]; tdType.appendChild(chip);
-    numCell(tr, c.startDate); numCell(tr, c.endDate || 'غير محدد');
-    const tdAmt = cell(tr, c.payBasis === 'volunteer' ? 'تطوعي' : `${money(c.basicSalary + c.allowances)} ${c.payBasis === 'daily' ? '/ يوم' : '/ شهر'}`);
-    const g = c.payBasis === 'monthly' ? ctGrades[c.employeeId] : null;
-    if (g && (c.basicSalary < g.min || c.basicSalary > g.max)) { const w = document.createElement('span'); w.className = 'cell-sub'; w.style.color = 'var(--warning-ink)'; w.textContent = 'خارج نطاق الدرجة'; tdAmt.appendChild(w); }
+    const e = ctEmps[c.employeeId], st = Store.contractStatus(c);
+    numCell(tr, c.contractNo);
+    if (ctTab === 'monthly') {
+      subCell(tr, e?.name || '؟', e?.empNo, null); subCell(tr, c.jobTitle || e?.jobTitle || '—', e?.department);
+      const g = grades[c.gradeId]; cell(tr, g ? `${g.code}${c.gradeStep ? ' / خطوة ' + c.gradeStep : ''}` : '—');
+      periodCell(tr, c.startDate, c.endDate);
+      const tdAmt = cell(tr, `${money(c.basicSalary + c.allowances)} ${c.currency} / شهر`), rg = ctGrades[c.employeeId];
+      if (rg && (c.basicSalary < rg.min || c.basicSalary > rg.max)) { const w = document.createElement('span'); w.className = 'cell-sub'; w.style.color = 'var(--warning-ink)'; w.textContent = 'خارج نطاق الدرجة'; tdAmt.appendChild(w); }
+    } else {
+      subCell(tr, e?.name || '؟', e?.empNo); subCell(tr, c.projectName || '—', c.projectCode); cell(tr, ctEmps[c.supervisorId]?.name || '—'); periodCell(tr, c.startDate, c.endDate);
+      if (ctTab === 'daily') cell(tr, `${money(c.basicSalary + c.allowances)} ${c.currency} / يوم`);
+    }
     badgeCell(tr, CT_STATUS[st][0], CT_STATUS[st][1]);
     actionsCell(tr,
+      iconBtn('printer', 'طباعة العقد (PDF)', () => printContract(c.id)),
       iconBtn('pencil', 'تعديل العقد', () => openContractDialog(c)),
       iconBtn('plus', 'تجديد العقد', () => openContractDialog(null, c)),
       iconBtn('trash', 'حذف العقد', async () => {
@@ -397,47 +437,82 @@ function renderContracts() {
         if (!confirm(`حذف العقد ${c.contractNo} نهائياً؟ لإيقافه مع بقاء السجل غيّر حالته إلى «ملغى».`)) return;
         try { await Store.deleteContract(c.id); renderContracts(); } catch (err) { showAlert('contractsMsg', err.message); }
       }, true));
-  }, ctCache.length ? 'لا توجد عقود مطابقة' : 'لا توجد عقود بعد. أضف أول عقد', 8);
+  }, mine.length ? (ctTodayOnly ? 'لا توجد عقود سارية اليوم ضمن هذا النوع' : 'لا توجد عقود مطابقة') : `لا توجد ${KIND[ctTab].tab} بعد. أضف أول ${KIND[ctTab].one}`, CT_HEAD[ctTab].length + 1);
 }
-const addDays = (date, n) => { const d = new Date(date + 'T00:00:00'); d.setDate(d.getDate() + n); return Store.dateKey(d); };
-const PAY_LABEL = { monthly: 'شهري', daily: 'يومي', volunteer: 'متطوع' };
+
+// ----- نموذج العقد -----
+let cEmpMap = {};
+const cLabel = e => `${e.name} — ${e.empNo}`;
+function setContractPerson(kind, id) { // kind: employee | supervisor
+  const e = ctEmps[id], [search, hidden] = kind === 'employee' ? ['c_employeeSearch', 'c_employeeId'] : ['c_supervisorSearch', 'c_supervisorId'];
+  $(hidden).value = e ? id : ''; $(search).value = e ? cLabel(e) : '';
+}
+function syncContractPerson(kind) {
+  const [search, hidden] = kind === 'employee' ? ['c_employeeSearch', 'c_employeeId'] : ['c_supervisorSearch', 'c_supervisorId'], v = $(search).value.trim();
+  $(hidden).value = v ? (cEmpMap[v] || '') : '';
+}
+let lastSug = null;
+function updateGradeSuggest(fromGrade) {
+  const g = Store.grades().find(x => x.id === $('c_gradeId').value), box = $('cGradeSug');
+  box.className = 'hint-line'; box.textContent = '';
+  if (!g) return;
+  const steps = g.increment ? Math.floor((g.max - g.min) / g.increment) + 1 : 1, step = $('c_gradeStep').value === '' ? null : Number($('c_gradeStep').value);
+  box.textContent = `نطاق الدرجة ${money(g.min)} إلى ${money(g.max)}${g.increment ? ` — ${steps} خطوة، العلاوة ${money(g.increment)}` : ''}`;
+  if (step && Number.isInteger(step) && step >= 1 && step <= steps) {
+    const sug = g.min + (step - 1) * g.increment; box.textContent += ` — الراتب المقترح للخطوة ${step}: ${money(sug)}`;
+    const cur = $('c_basicSalary').value;
+    if (cur === '' || Number(cur) === lastSug) { $('c_basicSalary').value = sug; updateContractSum(); }
+    lastSug = sug;
+  } else if (step) { box.textContent += ' — الخطوة خارج نطاق الدرجة'; box.classList.add('warn'); }
+}
 function updateContractSum() {
-  const basis = $('c_payBasis').value, vol = basis === 'volunteer';
+  const basis = $('c_payBasis').value, vol = basis === 'volunteer', cur = $('c_currency').selectedOptions[0]?.textContent || '';
   $('c_basicLabel').textContent = basis === 'daily' ? 'الأجر اليومي *' : 'الراتب الشهري الأساسي *';
   $('c_basicSalary').disabled = $('c_allowances').disabled = vol;
   if (vol) $('c_basicSalary').value = $('c_allowances').value = '';
   const t = (Number($('c_basicSalary').value) || 0) + (Number($('c_allowances').value) || 0);
-  $('cSum').textContent = vol ? 'عقد تطوعي: بلا أجر' : t ? (basis === 'daily' ? `الأجر اليومي الإجمالي: ${money(t)}` : `الراتب الإجمالي: ${money(t)} شهرياً`) : '';
-  // مقارنة الراتب الشهري بنطاق درجة الموظف
+  $('cSum').textContent = vol ? 'عقد تطوعي: بلا أجر' : t ? (basis === 'daily' ? `الأجر اليومي الإجمالي: ${money(t)} ${cur}` : `الراتب الإجمالي: ${money(t)} ${cur} شهرياً`) : '';
+  // مقارنة الراتب الشهري بنطاق درجة الموظف (تحذير غير مانع)
   const box = $('cGrade'); box.className = 'hint-line'; box.textContent = '';
   const g = basis === 'monthly' && $('c_employeeId').value ? Store.gradeRange($('c_employeeId').value) : null;
   if (g) {
-    box.textContent = `درجة الموظف: ${g.name} (${g.code}) — نطاق الراتب الأساسي ${money(g.min)} إلى ${money(g.max)}`;
+    box.textContent = `درجة مسمى الموظف: ${g.name} (${g.code}) — نطاق الراتب الأساسي ${money(g.min)} إلى ${money(g.max)}`;
     const b = $('c_basicSalary').value === '' ? null : Number($('c_basicSalary').value);
     if (b !== null && (b < g.min || b > g.max)) { box.textContent += ' — الراتب خارج النطاق'; box.classList.add('warn'); } else if (b !== null) box.classList.add('good');
   }
 }
-// c: عقد للتعديل، renewFrom: عقد يُجدَّد (يُملأ تلقائياً بعقد جديد يبدأ بعد انتهائه)
-function openContractDialog(c, renewFrom) {
+function showContractEmployee() { // معلومات المنصب والقسم من ملف الموظف + درجة مقترحة
+  const e = ctEmps[$('c_employeeId').value];
+  $('c_empInfo').textContent = e ? [e.jobTitle || 'بلا مسمى', e.department || 'بلا قسم'].join(' · ') : '—';
+}
+// c: عقد للتعديل، renewFrom: عقد يُجدَّد، kind: نوع العقد الجديد
+function openContractDialog(c, renewFrom, kind) {
   hideAlert('contractMsg'); $('contractForm').reset();
-  const emps = Store.employees().filter(e => (me.role === 'admin' || e.userId !== me.id));
-  $('c_employeeId').replaceChildren(...emps.map(e => new Option(`${e.name} (${e.empNo})`, e.id)));
+  const src = c || renewFrom; kind = src?.payBasis || kind || ctTab;
+  const dlg = $('contractDialog'); dlg.classList.toggle('is-monthly', kind === 'monthly'); dlg.classList.toggle('is-worker', kind !== 'monthly');
+  const emps = Object.values(ctEmps).filter(e => (e.status !== 'terminated' || e.id === src?.employeeId) && (me.role === 'admin' || e.userId !== me.id));
+  cEmpMap = Object.fromEntries(emps.map(e => [cLabel(e), e.id]));
+  $('cEmpList').replaceChildren(...emps.map(e => { const o = document.createElement('option'); o.value = cLabel(e); o.label = e.jobTitle || ''; return o; }));
   $('c_type').replaceChildren(...Store.contractTypes.map(t => new Option(t)));
-  $('c_payBasis').replaceChildren(...Store.payBases.map(k => new Option(PAY_LABEL[k], k)));
+  $('c_currency').replaceChildren(...Object.entries(Store.currencies).map(([k, v]) => new Option(v, k)));
+  $('c_gradeId').replaceChildren(new Option('-- بدون --', ''), ...Store.grades().map(g => new Option(`${g.code} — ${g.name}`, g.id)));
   $('contractForm').dataset.id = c ? c.id : '';
-  $('contractTitle').textContent = c ? `تعديل العقد ${c.contractNo}` : renewFrom ? `تجديد العقد ${renewFrom.contractNo}` : 'إضافة عقد';
+  $('contractTitle').textContent = `${c ? 'تعديل' : renewFrom ? 'تجديد' : 'إضافة'} ${KIND[kind].one}${c ? ' ' + c.contractNo : ''}`;
+  $('c_empLabel').textContent = `${KIND[kind].who} *`;
   $('c_contractNo').value = c ? c.contractNo : Store.nextContractNo();
-  const src = c || renewFrom;
-  document.querySelectorAll('#contractForm [data-c]').forEach(el => { el.value = src ? (src[el.dataset.c] ?? '') : (el.dataset.c === 'status' ? 'active' : el.dataset.c === 'payBasis' ? 'monthly' : ''); });
+  document.querySelectorAll('#contractForm [data-c]').forEach(el => { el.value = src ? (src[el.dataset.c] ?? '') : ''; });
+  $('c_payBasis').value = kind;
+  if (!src) { $('c_status').value = 'active'; $('c_issueDate').value = Store.dateKey(new Date()); $('c_type').value = kind === 'monthly' ? 'دائم' : 'محدد المدة'; $('c_currency').value = Store.settings.currency; }
   if (renewFrom) {
-    $('c_status').value = 'active';
+    $('c_status').value = 'active'; $('c_issueDate').value = Store.dateKey(new Date());
     const start = renewFrom.endDate ? addDays(renewFrom.endDate, 1) : Store.dateKey(new Date());
     $('c_startDate').value = start;
     $('c_endDate').value = renewFrom.endDate ? addDays(start, Math.round((new Date(renewFrom.endDate) - new Date(renewFrom.startDate)) / 86400000)) : '';
   }
-  if (!src && emps[0]) $('c_employeeId').value = emps[0].id;
-  updateContractSum();
-  $('contractDialog').showModal();
+  setContractPerson('employee', src?.employeeId); setContractPerson('supervisor', src?.supervisorId);
+  showContractEmployee(); lastSug = null;
+  updateContractSum(); updateGradeSuggest();
+  dlg.showModal();
 }
 function contractFromForm() {
   const c = { id: $('contractForm').dataset.id || undefined };
@@ -680,6 +755,8 @@ function openPwDialog(user) {
 function renderSettings() {
   const s = Store.settings, off = s.weekend.split(',');
   $('setStart').value = s.workStart; $('setEnd').value = s.workEnd; $('setGrace').value = s.graceMin;
+  $('setOrg').value = s.orgName; $('setTerms').value = s.contractTerms;
+  $('setCurrency').replaceChildren(...Object.entries(Store.currencies).map(([k, v]) => new Option(v, k))); $('setCurrency').value = s.currency;
   $('setWeekend').replaceChildren(...DAY_NAMES.map((name, i) => {
     const l = document.createElement('label'), c = document.createElement('input');
     c.type = 'checkbox'; c.value = i; c.checked = off.includes(String(i));
@@ -865,19 +942,31 @@ function init() {
     $('orgLine').onclick = () => { orgView = 'line'; renderOrg(); };
 
     // العقود
-    $('addContract').onclick = () => openContractDialog(null);
+    $('addContract').onclick = () => openContractDialog(null, null, ctTab);
     $('contractCancel').onclick = () => $('contractDialog').close();
     ['c_basicSalary', 'c_allowances'].forEach(id => $(id).addEventListener('input', updateContractSum));
-    ['c_payBasis', 'c_employeeId'].forEach(id => $(id).addEventListener('change', updateContractSum));
+    $('c_currency').addEventListener('change', updateContractSum);
+    $('c_employeeSearch').addEventListener('input', () => { syncContractPerson('employee'); showContractEmployee(); updateContractSum(); });
+    $('c_supervisorSearch').addEventListener('input', () => syncContractPerson('supervisor'));
+    $('c_gradeId').addEventListener('change', () => { lastSug = null; updateGradeSuggest(); });
+    $('c_gradeStep').addEventListener('input', updateGradeSuggest);
     $('contractForm').onsubmit = async e => {
       e.preventDefault(); hideAlert('contractMsg');
-      try { await Store.saveContract(contractFromForm()); $('contractDialog').close(); renderContracts(); }
-      catch (err) { showAlert('contractMsg', err.message); $('contractDialog').scrollTo({ top: $('contractDialog').scrollHeight }); }
+      const andPrint = e.submitter && e.submitter.id === 'contractSavePrint';
+      try {
+        syncContractPerson('employee'); syncContractPerson('supervisor');
+        if ($('c_employeeSearch').value.trim() && !$('c_employeeId').value) throw new Error('اختر الموظف من القائمة المقترحة');
+        if ($('c_supervisorSearch').value.trim() && !$('c_supervisorId').value) throw new Error('اختر المشرف من القائمة المقترحة');
+        const res = await Store.saveContract(contractFromForm()); $('contractDialog').close(); renderContracts();
+        if (andPrint) printContract(res.id);
+      } catch (err) { showAlert('contractMsg', err.message); $('contractDialog').scrollTo({ top: $('contractDialog').scrollHeight }); }
     };
+    document.querySelectorAll('[data-ct]').forEach(b => b.onclick = () => { ctTab = b.dataset.ct; renderContracts(); });
+    $('cTodayOnly').onclick = () => { ctTodayOnly = !ctTodayOnly; renderContracts(); };
     ['cSearch', 'cStatus'].forEach(id => $(id).addEventListener('input', renderContracts));
-    $('exportContracts').onclick = () => downloadCsv(`contracts-${Store.dateKey(new Date())}.csv`,
-      [['رقم العقد', 'الموظف', 'مدة العقد', 'نوع الأجر', 'البداية', 'النهاية', 'الراتب/الأجر الأساسي', 'البدلات', 'الحالة']]
-        .concat(filteredContracts().map(c => [c.contractNo, ctEmps[c.employeeId]?.name || '', c.type, PAY_LABEL[c.payBasis], c.startDate, c.endDate || '', c.basicSalary, c.allowances, CT_STATUS[Store.contractStatus(c)][0]])));
+    $('exportContracts').onclick = () => downloadCsv(`contracts-${ctTab}-${Store.dateKey(new Date())}.csv`,
+      [['رقم العقد', 'الاسم', 'نوع العقد', 'مدة العقد', 'تاريخ التحرير', 'البداية', 'النهاية', 'الراتب/الأجر الأساسي', 'البدلات', 'العملة', 'المشروع', 'كود المشروع', 'المشرف', 'الحالة']]
+        .concat(filteredContracts().map(c => [c.contractNo, ctEmps[c.employeeId]?.name || '', PAY_LABEL[c.payBasis], c.type, c.issueDate || '', c.startDate, c.endDate || '', c.basicSalary, c.allowances, c.currency, c.projectName, c.projectCode, ctEmps[c.supervisorId]?.name || '', CT_STATUS[Store.contractStatus(c)][0]])));
   }
 
   if (Store.canEditAttendance(me)) {
@@ -922,6 +1011,7 @@ function init() {
       e.preventDefault(); hideAlert('setMsg'); $('setOk').classList.remove('show');
       try {
         await Store.saveSettings({ workStart: $('setStart').value, workEnd: $('setEnd').value, graceMin: $('setGrace').value,
+          orgName: $('setOrg').value, currency: $('setCurrency').value, contractTerms: $('setTerms').value,
           weekend: [...$('setWeekend').querySelectorAll('input:checked')].map(c => c.value).join(',') });
         $('setOk').classList.add('show');
       } catch (err) { showAlert('setMsg', err.message); }

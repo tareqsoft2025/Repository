@@ -84,7 +84,7 @@
             </div>
 
             <section class="card" id="contractCard" aria-label="عقدي">
-                <div class="card-head"><h3><svg class="i"><use href="#i-file-text"/></svg>عقدي</h3></div>
+                <div class="card-head"><h3><svg class="i"><use href="#i-file-text"/></svg>عقدي</h3><button class="btn secondary sm hidden" id="printMine"><svg class="i"><use href="#i-printer"/></svg>طباعة العقد</button></div>
                 <div id="myContract"></div>
             </section>
 
@@ -135,22 +135,28 @@
         <!-- العقود (موارد بشرية) -->
         <div class="panel hidden" data-panel="contracts">
             <section class="stats-row" aria-label="ملخص العقود">
-                <div class="card stat"><div class="ico"><svg class="i"><use href="#i-file-text"/></svg></div><div><b id="cTotal">0</b><span>إجمالي العقود</span></div></div>
-                <div class="card stat"><div class="ico ok"><svg class="i"><use href="#i-check"/></svg></div><div><b id="cActive">0</b><span>سارية</span></div></div>
+                <div class="card stat"><div class="ico"><svg class="i"><use href="#i-file-text"/></svg></div><div><b id="cTotal">0</b><span id="cTotalLbl">إجمالي العقود</span></div></div>
+                <div class="card stat"><div class="ico ok"><svg class="i"><use href="#i-check"/></svg></div><div><b id="cToday">0</b><span>عقود اليوم</span></div></div>
                 <div class="card stat"><div class="ico warn"><svg class="i"><use href="#i-alert"/></svg></div><div><b id="cExpiring">0</b><span>تنتهي خلال 30 يوماً</span></div></div>
                 <div class="card stat"><div class="ico gold"><svg class="i"><use href="#i-ban"/></svg></div><div><b id="cExpired">0</b><span>منتهية</span></div></div>
             </section>
             <section class="card">
-                <div class="card-head"><h3><svg class="i"><use href="#i-file-text"/></svg>عقود الموظفين</h3>
-                    <button class="btn" id="addContract"><svg class="i"><use href="#i-plus"/></svg>إضافة عقد</button>
+                <div class="card-head"><h3><svg class="i"><use href="#i-file-text"/></svg>العقود</h3>
+                    <button class="btn" id="addContract"><svg class="i"><use href="#i-plus"/></svg><span id="addContractLbl">إضافة عقد</span></button>
                     <button class="btn secondary" id="exportContracts"><svg class="i"><use href="#i-download"/></svg>تصدير CSV</button>
                 </div>
-                <div class="filters two">
-                    <div class="field"><label for="cSearch">بحث</label><input type="search" id="cSearch" placeholder="اسم الموظف أو رقم العقد"></div>
-                    <div class="field"><label for="cStatus">الحالة</label><select id="cStatus"><option value="">الكل</option><option value="active">ساري</option><option value="expiring">ينتهي قريباً</option><option value="upcoming">لم يبدأ</option><option value="expired">منتهي</option><option value="cancelled">ملغى</option></select></div>
+                <div class="ct-tabs" role="tablist" aria-label="أنواع العقود">
+                    <button type="button" role="tab" data-ct="monthly" aria-selected="true">عقود موظفين <span class="cnt" id="cnMonthly">0</span></button>
+                    <button type="button" role="tab" data-ct="daily" aria-selected="false">عقود يومي <span class="cnt" id="cnDaily">0</span></button>
+                    <button type="button" role="tab" data-ct="volunteer" aria-selected="false">عقود متطوعين <span class="cnt" id="cnVolunteer">0</span></button>
                 </div>
-                <div class="table-wrap"><table>
-                    <thead><tr><th>رقم العقد</th><th>الموظف</th><th>النوع</th><th>البداية</th><th>النهاية</th><th>الراتب الإجمالي</th><th>الحالة</th><th class="no-print"></th></tr></thead>
+                <div class="filters">
+                    <div class="field"><label for="cSearch">بحث</label><input type="search" id="cSearch" placeholder="اسم الموظف أو رقم العقد أو المشروع"></div>
+                    <div class="field"><label for="cStatus">الحالة</label><select id="cStatus"><option value="">الكل</option><option value="active">ساري</option><option value="expiring">ينتهي قريباً</option><option value="upcoming">لم يبدأ</option><option value="expired">منتهي</option><option value="cancelled">ملغى</option></select></div>
+                    <div class="field"><label>&nbsp;</label><button type="button" class="toggle" id="cTodayOnly" aria-pressed="false"><svg class="i"><use href="#i-calendar-check"/></svg>عقود اليوم فقط</button></div>
+                </div>
+                <div class="table-wrap"><table class="compact">
+                    <thead id="contractsHead"></thead>
                     <tbody id="contractsBody"></tbody>
                 </table></div>
                 <div class="alert" id="contractsMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="contractsMsgText"></span></div>
@@ -277,6 +283,11 @@
                         <div class="field"><label for="setEnd">نهاية الدوام</label><input type="time" id="setEnd" required></div>
                         <div class="field"><label for="setGrace">مهلة التأخير (دقائق)</label><input type="number" id="setGrace" min="0" max="120" required></div>
                     </div>
+                    <div class="form-grid" style="margin-top:16px">
+                        <div class="field span2"><label for="setOrg">اسم الجهة المتعاقدة (يظهر في العقود المطبوعة)</label><input id="setOrg" maxlength="120"></div>
+                        <div class="field"><label for="setCurrency">العملة الافتراضية للعقود</label><select id="setCurrency"></select></div>
+                    </div>
+                    <div class="field" style="margin-top:16px"><label for="setTerms">البنود العامة للعقد (بند في كل سطر)</label><textarea id="setTerms" rows="6"></textarea></div>
                     <div class="field" style="margin-top:16px"><label>أيام الإجازة الأسبوعية</label><div class="weekdays" id="setWeekend"></div></div>
                     <button class="btn" type="submit"><svg class="i"><use href="#i-check"/></svg>حفظ الإعدادات</button>
                 </form>
@@ -438,28 +449,73 @@
     </dialog>
 
     <!-- نافذة العقد -->
-    <dialog id="contractDialog" class="wide" aria-labelledby="contractTitle">
+    <dialog id="contractDialog" class="wide xl" aria-labelledby="contractTitle">
         <form method="dialog" id="contractForm" novalidate>
             <h3 id="contractTitle">إضافة عقد</h3>
+            <input type="hidden" id="c_payBasis" data-c="payBasis">
+
+            <h4 class="sec-title">بيانات العقد</h4>
             <div class="form-grid">
-                <div class="field span2"><label for="c_employeeId">الموظف *</label><select id="c_employeeId" data-c="employeeId"></select></div>
+                <div class="field span2"><label for="c_employeeSearch" id="c_empLabel">الموظف *</label>
+                    <input id="c_employeeSearch" list="cEmpList" placeholder="ابحث بالاسم أو رقم الموظف..." autocomplete="off">
+                    <input type="hidden" id="c_employeeId" data-c="employeeId"><datalist id="cEmpList"></datalist></div>
                 <div class="field"><label for="c_contractNo">رقم العقد (تلقائي)</label><input id="c_contractNo" dir="ltr" disabled></div>
-                <div class="field"><label for="c_payBasis">نوع الأجر *</label><select id="c_payBasis" data-c="payBasis"></select></div>
+                <div class="field"><label for="c_issueDate">تاريخ تحرير العقد *</label><input type="date" id="c_issueDate" data-c="issueDate"></div>
                 <div class="field"><label for="c_type">مدة العقد *</label><select id="c_type" data-c="type"></select></div>
+                <div class="field"><label for="c_status">حالة العقد</label><select id="c_status" data-c="status"><option value="active">فعّال</option><option value="cancelled">ملغى</option></select></div>
+            </div>
+
+            <div class="k-monthly">
+                <h4 class="sec-title">المنصب والقسم وسلم الرواتب</h4>
+                <div class="form-grid">
+                    <div class="field span2"><label>المنصب والقسم (من ملف الموظف)</label><div class="readonly" id="c_empInfo">—</div></div>
+                    <div class="field"><label for="c_gradeId">الدرجة في سلم الرواتب</label><select id="c_gradeId" data-c="gradeId"></select></div>
+                    <div class="field"><label for="c_gradeStep">الخطوة في السلم</label><input type="number" id="c_gradeStep" data-c="gradeStep" min="1" step="1" dir="ltr"></div>
+                    <div class="field"><label for="c_jobTitle">المسمى في العقد (اختياري)</label><input id="c_jobTitle" data-c="jobTitle"></div>
+                </div>
+                <div class="hint-line" id="cGradeSug"></div>
+            </div>
+
+            <h4 class="sec-title">مدة العقد</h4>
+            <div class="form-grid">
                 <div class="field"><label for="c_startDate">تاريخ البداية *</label><input type="date" id="c_startDate" data-c="startDate"></div>
                 <div class="field"><label for="c_endDate">تاريخ الانتهاء</label><input type="date" id="c_endDate" data-c="endDate"></div>
+            </div>
+
+            <h4 class="sec-title">الأجر والعملة</h4>
+            <div class="form-grid">
                 <div class="field"><label for="c_basicSalary" id="c_basicLabel">الراتب الأساسي *</label><input type="number" id="c_basicSalary" data-c="basicSalary" min="0" step="0.01" dir="ltr"></div>
                 <div class="field"><label for="c_allowances">البدلات</label><input type="number" id="c_allowances" data-c="allowances" min="0" step="0.01" dir="ltr"></div>
-                <div class="field"><label for="c_jobTitle">المسمى الوظيفي</label><input id="c_jobTitle" data-c="jobTitle"></div>
-                <div class="field"><label for="c_status">حالة العقد</label><select id="c_status" data-c="status"><option value="active">فعّال</option><option value="cancelled">ملغى</option></select></div>
+                <div class="field"><label for="c_currency">العملة</label><select id="c_currency" data-c="currency"></select></div>
             </div>
             <p class="card-note" id="cSum" style="margin:12px 0 0"></p>
             <div class="hint-line" id="cGrade"></div>
-            <div class="field" style="margin-top:16px"><label for="c_notes">ملاحظات</label><textarea id="c_notes" data-c="notes" rows="3"></textarea></div>
+
+            <div class="k-worker">
+                <h4 class="sec-title">المشروع والمشرف ووصف العمل</h4>
+                <div class="form-grid">
+                    <div class="field"><label for="c_projectCode">كود المشروع</label><input id="c_projectCode" data-c="projectCode" dir="ltr"></div>
+                    <div class="field span2"><label for="c_projectName">اسم المشروع (عربي) *</label><input id="c_projectName" data-c="projectName"></div>
+                    <div class="field span2"><label for="c_projectNameEn">اسم المشروع (إنجليزي)</label><input id="c_projectNameEn" data-c="projectNameEn" dir="ltr"></div>
+                    <div class="field span2"><label for="c_supervisorSearch">اسم المشرف *</label>
+                        <input id="c_supervisorSearch" list="cEmpList" placeholder="ابحث بالاسم واختر من القائمة..." autocomplete="off">
+                        <input type="hidden" id="c_supervisorId" data-c="supervisorId"></div>
+                </div>
+                <div class="form-grid" style="margin-top:12px">
+                    <div class="field span2"><label for="c_workDesc">صفة/وصف العمل في العقد (عربي) *</label><textarea id="c_workDesc" data-c="workDesc" rows="3" placeholder="مثال: عامل مياومة"></textarea></div>
+                    <div class="field span2"><label for="c_workDescEn">Work description (English)</label><textarea id="c_workDescEn" data-c="workDescEn" rows="3" dir="ltr" placeholder="e.g. Daily wage worker"></textarea></div>
+                </div>
+            </div>
+
+            <h4 class="sec-title">شمول العقد وملاحظات</h4>
+            <div class="field"><label for="c_inclusions">شمول العقد (نص إضافي يُطبع في العقد)</label><textarea id="c_inclusions" data-c="inclusions" rows="2"></textarea></div>
+            <div class="field"><label for="c_notes">ملاحظات داخلية (لا تُطبع)</label><textarea id="c_notes" data-c="notes" rows="2"></textarea></div>
+
             <div class="alert" id="contractMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="contractMsgText"></span></div>
-            <div class="dialog-actions">
+            <div class="dialog-actions sticky">
                 <button type="button" class="btn secondary" id="contractCancel">إلغاء</button>
-                <button type="submit" class="btn">حفظ</button>
+                <button type="submit" class="btn secondary" id="contractSavePrint"><svg class="i"><use href="#i-printer"/></svg>حفظ وطباعة</button>
+                <button type="submit" class="btn" id="contractSave">حفظ</button>
             </div>
         </form>
     </dialog>
