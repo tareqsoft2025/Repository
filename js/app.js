@@ -701,13 +701,14 @@ function renderAdmin() {
   const names = userNames();
   fillRows($('adminBody'), Store.recordsOn($('adminDate').value), (tr, r) => {
     cell(tr, names[r.userId] || '؟'); timeCell(tr, fmtTime(r.checkIn)); timeCell(tr, fmtTime(r.checkOut)); numCell(tr, fmtHours(Store.hours(r))); statusCell(tr, r);
+    { const td = document.createElement('td'); if (hasLoc(r, 'in') || hasLoc(r, 'out')) { const b = iconBtn('map-pin', 'عرض الموقع على الخريطة', () => showMap([r], `${names[r.userId] || ''} — ${r.date}`)); td.appendChild(b); } else td.textContent = '—'; tr.appendChild(td); }
     actionsCell(tr,
       iconBtn('pencil', 'تعديل السجل', () => openRecDialog(r)),
       iconBtn('trash', 'حذف السجل', async () => {
         if (!confirm(`حذف سجل ${names[r.userId] || ''} بتاريخ ${r.date}؟`)) return;
         await Store.deleteRecord(r.id); refresh();
       }, true));
-  }, 'لم يسجّل أي موظف حضوراً في هذا اليوم', 6);
+  }, 'لم يسجّل أي موظف حضوراً في هذا اليوم', 7);
 }
 function openRecDialog(rec) {
   hideAlert('recMsg');
@@ -939,10 +940,58 @@ function initSidebar() {
   });
 }
 
+const IN_APP = /HRApp\//.test(navigator.userAgent);
+// موقع الجهاز الحالي؛ داخل التطبيق يُشترط، وفي المتصفح يُسجَّل الحضور بدونه إن تعذّر
+function getLocation() {
+  return new Promise((resolve, reject) => {
+    const fail = msg => IN_APP ? reject(new Error(msg)) : resolve(null);
+    if (!navigator.geolocation) return fail('الجهاز لا يدعم تحديد الموقع');
+    navigator.geolocation.getCurrentPosition(p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }),
+      e => fail(e.code === 1 ? 'لم يُسمح بالوصول إلى الموقع. فعّل إذن الموقع للتطبيق ثم أعد المحاولة' : 'تعذّر تحديد موقعك. تأكد من تشغيل GPS ثم أعد المحاولة'),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  });
+}
 async function act(fn) {
   hideAlert('msg');
-  try { await fn(me.id); } catch (e) { showAlert('msg', e.message); }
+  const b1 = $('btnIn'), b2 = $('btnOut'), d1 = b1.disabled, d2 = b2.disabled; b1.disabled = b2.disabled = true;
+  try { await fn(me.id, await getLocation()); } catch (e) { showAlert('msg', e.message); b1.disabled = d1; b2.disabled = d2; }
   refresh();
+}
+// ===== خريطة مواقع التسجيل (Leaflet + OpenStreetMap) =====
+let leafletReady = null, mapObj = null, mapLayer = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve();
+  return leafletReady || (leafletReady = new Promise((res, rej) => {
+    const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'js/vendor/leaflet/leaflet.css'; document.head.appendChild(css);
+    const sc = document.createElement('script'); sc.src = 'js/vendor/leaflet/leaflet.js'; sc.onload = res; sc.onerror = () => { leafletReady = null; rej(new Error('تعذّر تحميل الخريطة')); };
+    document.head.appendChild(sc);
+  }));
+}
+const hasLoc = (r, k) => r[k + 'Lat'] != null && r[k + 'Lng'] != null;
+async function showMap(recs, title) {
+  const pts = [];
+  recs.forEach(r => { for (const k of ['in', 'out']) if (hasLoc(r, k)) pts.push({ k, r, lat: r[k + 'Lat'], lng: r[k + 'Lng'], acc: r[k + 'Acc'] }); });
+  const names = userNames();
+  try { await loadLeaflet(); } catch (e) { alert(e.message); return; }
+  $('mapTitle').textContent = title; $('mapCount').textContent = `${pts.length} موقع`;
+  $('mapDialog').showModal();
+  if (!mapObj) {
+    mapObj = L.map('mapBox', { zoomControl: true }).setView([31.5, 34.45], 9);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© مساهمو OpenStreetMap' }).addTo(mapObj);
+    mapLayer = L.layerGroup().addTo(mapObj);
+  }
+  mapLayer.clearLayers();
+  const bounds = [];
+  pts.forEach(p => {
+    const color = p.k === 'in' ? '#16794B' : '#B42318', ll = [p.lat, p.lng]; bounds.push(ll);
+    const t = p.k === 'in' ? p.r.checkIn : p.r.checkOut;
+    const box = document.createElement('div'); box.style.direction = 'rtl';
+    const b = document.createElement('b'); b.textContent = names[p.r.userId] || '؟';
+    box.append(b, document.createElement('br'), `${p.k === 'in' ? 'حضور' : 'انصراف'} ${p.r.date} ${fmtTime(t)}`);
+    if (p.acc != null) { box.append(document.createElement('br'), `الدقة ±${p.acc} م`); L.circle(ll, { radius: p.acc, color, weight: 1, fillOpacity: 0.08 }).addTo(mapLayer); }
+    L.circleMarker(ll, { radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).bindPopup(box).addTo(mapLayer);
+  });
+  setTimeout(() => { mapObj.invalidateSize(); if (bounds.length) mapObj.fitBounds(bounds, { padding: [40, 40], maxZoom: 17 }); }, 80);
 }
 
 // أول دخول بكلمة مرور مؤقتة: نافذة لا تُغلق حتى يغيّرها
@@ -970,8 +1019,10 @@ function init() {
   $('avatar').textContent = [...me.name][0];
   $('logout').onclick = () => { Store.logout(); location.replace('login.html'); };
   $('btnPw').onclick = () => openPwDialog(me);
-  $('btnIn').onclick = () => act(id => Store.checkIn(id));
-  $('btnOut').onclick = () => act(id => Store.checkOut(id));
+  $('btnIn').onclick = () => act((id, loc) => Store.checkIn(id, loc));
+  $('btnOut').onclick = () => act((id, loc) => Store.checkOut(id, loc));
+  $('mapClose').onclick = () => $('mapDialog').close();
+  $('mapAll').onclick = () => showMap(Store.recordsOn($('adminDate').value), 'مواقع تسجيل ' + $('adminDate').value);
 
   $('myMonth').value = $('reportMonth').value = thisMonth();
   $('adminDate').value = Store.dateKey(new Date());

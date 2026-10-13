@@ -1,6 +1,10 @@
 package com.tareqsoft.hr;
 
+import android.Manifest;
 import android.app.Activity;
+import android.content.pm.PackageManager;
+import android.os.Build;
+import android.webkit.GeolocationPermissions;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.net.Uri;
@@ -23,7 +27,10 @@ public class MainActivity extends Activity {
     static final String HOST = "tareqsoft2025.github.io";
     private static final int FILE_REQ = 1;
     private WebView web;
+    private static final int LOC_REQ = 2;
     private ValueCallback<Uri[]> filePicker;
+    private GeolocationPermissions.Callback geoCallback;
+    private String geoOrigin;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -59,6 +66,13 @@ public class MainActivity extends Activity {
             }
         });
         web.setWebChromeClient(new WebChromeClient() {
+            // تحديد الموقع للنظام المنشور فقط: يُطلب إذن أندرويد عند أول استخدام
+            @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback cb) {
+                if (!origin.startsWith("https://" + HOST)) { cb.invoke(origin, false, false); return; }
+                if (Build.VERSION.SDK_INT < 23 || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) { cb.invoke(origin, true, true); return; }
+                geoCallback = cb; geoOrigin = origin;
+                requestPermissions(new String[] { Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION }, LOC_REQ);
+            }
             @Override public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
                 if (filePicker != null) filePicker.onReceiveValue(null);
                 filePicker = cb;
@@ -87,6 +101,13 @@ public class MainActivity extends Activity {
             filePicker.onReceiveValue(res == RESULT_OK && data != null ? new Uri[] { data.getData() } : null);
             filePicker = null;
         } else super.onActivityResult(req, res, data);
+    }
+
+    @Override public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        if (req == LOC_REQ && geoCallback != null) {
+            boolean ok = res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED;
+            geoCallback.invoke(geoOrigin, ok, ok); geoCallback = null;
+        }
     }
 
     @Override protected void onSaveInstanceState(Bundle b) { super.onSaveInstanceState(b); web.saveState(b); }

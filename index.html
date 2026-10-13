@@ -252,10 +252,11 @@
                 <div class="card-head"><h3><svg class="i"><use href="#i-users"/></svg>سجل جميع الموظفين</h3>
                     <div class="field"><label for="adminDate">اليوم</label><input type="date" id="adminDate"></div>
                     <button class="btn" id="addRecord"><svg class="i"><use href="#i-plus"/></svg>إضافة سجل</button>
+                    <button class="btn secondary" id="mapAll"><svg class="i"><use href="#i-map-pin"/></svg>الخريطة</button>
                     <button class="btn secondary" id="exportCsv"><svg class="i"><use href="#i-download"/></svg>تصدير CSV</button>
                 </div>
                 <div class="table-wrap"><table>
-                    <thead><tr><th>الموظف</th><th>الحضور</th><th>الانصراف</th><th>الساعات</th><th>الحالة</th><th class="no-print"></th></tr></thead>
+                    <thead><tr><th>الموظف</th><th>الحضور</th><th>الانصراف</th><th>الساعات</th><th>الحالة</th><th>الموقع</th><th class="no-print"></th></tr></thead>
                     <tbody id="adminBody"></tbody>
                 </table></div>
             </section>
@@ -493,6 +494,13 @@
             <div class="alert" id="requestMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="requestMsgText"></span></div>
             <div class="dialog-actions"><button type="button" class="btn secondary" id="requestCancel">إلغاء</button><button type="submit" class="btn">تقديم الطلب</button></div>
         </form>
+    </dialog>
+
+    <!-- خريطة مواقع التسجيل -->
+    <dialog id="mapDialog" aria-labelledby="mapTitle" class="map-dlg">
+        <div class="map-head"><h3 id="mapTitle">مواقع التسجيل</h3><button type="button" class="icon-btn" id="mapClose" aria-label="إغلاق"><svg class="i"><use href="#i-x"/></svg></button></div>
+        <div id="mapBox" class="map-box"></div>
+        <div class="map-legend"><span><i class="dot in"></i>حضور</span><span><i class="dot out"></i>انصراف</span><span id="mapCount"></span></div>
     </dialog>
 
     <!-- نافذة رفض طلب -->

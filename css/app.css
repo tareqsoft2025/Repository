@@ -391,3 +391,12 @@ details[open] > summary .caret { transform: rotate(180deg); }
 
 /* نافذة الطلبات: حقول حسب النوع */
 #requestDialog.k-exit .rq-range, #requestDialog.k-exit .rq-mission, #requestDialog.k-leave .rq-exit, #requestDialog.k-leave .rq-mission, #requestDialog.k-mission .rq-exit { display: none; }
+
+/* خريطة مواقع التسجيل */
+.map-dlg { width: min(900px, 94vw); padding: 0; overflow: hidden; }
+.map-head { display: flex; align-items: center; justify-content: space-between; padding: var(--s3) var(--s4); border-bottom: 1px solid var(--border); }
+.map-head h3 { margin: 0; font-size: var(--text-md); }
+.map-box { height: min(520px, 65vh); direction: ltr; background: var(--surface-alt); }
+.map-legend { display: flex; gap: var(--s4); align-items: center; padding: var(--s3) var(--s4); font-size: var(--text-sm); color: var(--text-muted); }
+.map-legend .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-inline-end: 6px; vertical-align: -1px; }
+.map-legend .dot.in { background: #16794B; } .map-legend .dot.out { background: #B42318; }
