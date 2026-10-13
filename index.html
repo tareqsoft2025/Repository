@@ -296,6 +296,22 @@
             </section>
 
             <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-users"/></svg>البيانات التجريبية</h3></div>
+                <p class="card-note" id="demoStatus"></p>
+                <p class="card-note">تشمل: سلم رواتب وأقساماً وهيكلاً ومسميات، و17 موظفاً بحساباتهم وعقودهم (شهري ويومي وتطوعي) ومؤهلاتهم ودوراتهم وخبراتهم ومرفقات نموذجية، وسجل حضور لآخر ثلاثة أسابيع. تُميَّز بمعرّفات خاصة فتُحذف وحدها دون المساس ببياناتك الحقيقية.</p>
+                <div class="row">
+                    <button class="btn" id="loadDemo"><svg class="i"><use href="#i-plus"/></svg>تحميل بيانات تجريبية</button>
+                    <button class="btn secondary" id="removeDemo"><svg class="i"><use href="#i-trash"/></svg>حذف البيانات التجريبية</button>
+                </div>
+                <div class="alert" id="demoMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="demoMsgText"></span></div>
+                <div class="success" id="demoOk" role="status"><svg class="i"><use href="#i-check"/></svg><span id="demoOkText"></span></div>
+                <div class="table-wrap hidden" id="demoAccountsWrap" style="margin-top:16px"><table class="compact">
+                    <thead><tr><th>اسم المستخدم</th><th>كلمة المرور</th><th>الاسم</th><th>الصلاحية</th></tr></thead>
+                    <tbody id="demoAccounts"></tbody>
+                </table></div>
+            </section>
+
+            <section class="card">
                 <div class="card-head"><h3><svg class="i"><use href="#i-database"/></svg>قاعدة البيانات</h3></div>
                 <p class="card-note">قاعدة SQLite محفوظة في هذا المتصفح. صدّرها كملف <b>.sqlite</b> للنسخ الاحتياطي أو لنقلها إلى جهاز آخر.</p>
                 <div class="row">
