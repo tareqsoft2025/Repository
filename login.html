@@ -62,11 +62,15 @@
             if (Store.currentUser()) return location.replace('index.html');
             btn.disabled = false;
         }).catch(() => showError('تعذر تحميل قاعدة البيانات'));
-        form.addEventListener('submit', e => {
+        form.addEventListener('submit', async e => {
             e.preventDefault();
-            const u = Store.login(document.getElementById('username').value, document.getElementById('password').value);
-            if (u) location.replace('index.html');
-            else showError('اسم المستخدم أو كلمة المرور غير صحيحة');
+            btn.disabled = true;
+            try {
+                const u = await Store.login(document.getElementById('username').value, document.getElementById('password').value);
+                if (u) return location.replace('index.html');
+                showError('اسم المستخدم أو كلمة المرور غير صحيحة');
+            } catch (err) { showError(err.message); }
+            btn.disabled = false;
         });
     </script>
 </body>
