@@ -44,6 +44,7 @@
                     <div>موظف: <b class="num">ahmed / 123456</b></div>
                     <div>موارد بشرية (بعد تحميل البيانات التجريبية): <b class="num">hr.demo / demo1234</b></div>
                 </div>
+                <a class="btn secondary full" id="apkLink" href="app/hr.apk" download style="margin-top:16px">تحميل تطبيق الأندرويد (APK)</a>
             </div>
         </main>
     </div>
@@ -58,6 +59,7 @@
             document.getElementById('errorText').textContent = msg;
             document.getElementById('error').classList.add('show');
         };
+        if (/HRApp\//.test(navigator.userAgent)) document.getElementById('apkLink').remove(); // داخل التطبيق لا حاجة للرابط
         btn.disabled = true;
         Store.ready.then(() => {
             if (Store.currentUser()) return location.replace('index.html');
