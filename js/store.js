@@ -82,6 +82,7 @@ const Store = (() => {
       emergency_name TEXT, emergency_phone TEXT, notes TEXT,
       user_id TEXT,
       department_id TEXT, job_title_id TEXT, manager_id TEXT,
+      name_en TEXT, birth_place TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS contracts (
       id TEXT PRIMARY KEY,
@@ -96,6 +97,19 @@ const Store = (() => {
       notes TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_contracts_emp ON contracts(employee_id);
+    CREATE TABLE IF NOT EXISTS qualifications (
+      id TEXT PRIMARY KEY, employee_id TEXT NOT NULL, degree TEXT, major TEXT, university TEXT, grad_year INTEGER, gpa REAL);
+    CREATE TABLE IF NOT EXISTS courses (
+      id TEXT PRIMARY KEY, employee_id TEXT NOT NULL, name TEXT NOT NULL, hours REAL, from_date TEXT, to_date TEXT, organizer TEXT);
+    CREATE TABLE IF NOT EXISTS experiences (
+      id TEXT PRIMARY KEY, employee_id TEXT NOT NULL, employer TEXT NOT NULL, job_title TEXT, from_date TEXT, to_date TEXT);
+    CREATE TABLE IF NOT EXISTS documents (
+      id TEXT PRIMARY KEY, employee_id TEXT NOT NULL, kind TEXT NOT NULL, ref_id TEXT,
+      name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL, created_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_qual_emp ON qualifications(employee_id);
+    CREATE INDEX IF NOT EXISTS idx_course_emp ON courses(employee_id);
+    CREATE INDEX IF NOT EXISTS idx_exp_emp ON experiences(employee_id);
+    CREATE INDEX IF NOT EXISTS idx_doc_emp ON documents(employee_id);
     CREATE TABLE IF NOT EXISTS salary_grades (
       id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
       min_salary REAL NOT NULL, max_salary REAL NOT NULL, increment REAL NOT NULL DEFAULT 0, notes TEXT);
@@ -136,6 +150,8 @@ const Store = (() => {
     addCol('employees', 'department_id', 'TEXT');
     addCol('employees', 'job_title_id', 'TEXT');
     addCol('employees', 'manager_id', 'TEXT');
+    addCol('employees', 'name_en', 'TEXT');
+    addCol('employees', 'birth_place', 'TEXT');
     addCol('contracts', 'pay_basis', "TEXT NOT NULL DEFAULT 'monthly'");
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_emp_user ON employees(user_id) WHERE user_id IS NOT NULL');
     backfillCatalogs();
@@ -209,8 +225,18 @@ const Store = (() => {
   const EMP = `SELECT id, emp_no AS empNo, name, national_id AS nationalId, gender, birth_date AS birthDate, nationality, marital,
     phone, email, address, department, job_title AS jobTitle, emp_type AS empType, hire_date AS hireDate, salary, status,
     emergency_name AS emergencyName, emergency_phone AS emergencyPhone, notes, user_id AS userId,
-    department_id AS departmentId, job_title_id AS jobTitleId, manager_id AS managerId FROM employees`;
+    department_id AS departmentId, job_title_id AS jobTitleId, manager_id AS managerId, name_en AS nameEn, birth_place AS birthPlace FROM employees`;
   const trim = v => (v == null ? '' : String(v).trim());
+  const MAX_FILE = 2 * 1024 * 1024; // 2 ميغابايت لكل مرفق
+  const FILE_TYPES = { 'application/pdf': [[0x25, 0x50, 0x44, 0x46]], 'image/jpeg': [[0xFF, 0xD8, 0xFF]], 'image/png': [[0x89, 0x50, 0x4E, 0x47]], 'image/webp': [[0x52, 0x49, 0x46, 0x46]] };
+  // يتحقق من حجم المرفق ونوعه الحقيقي (من بداية الملف لا من اسمه) ويعيده منظفاً
+  const checkFile = (f, label) => {
+    need(f && f.data instanceof Uint8Array && f.data.length > 0, `${label}: الملف فارغ`);
+    need(f.data.length <= MAX_FILE, `${label}: حجم الملف أكبر من 2 ميغابايت`);
+    const sigs = FILE_TYPES[f.mime];
+    need(sigs && sigs.some(sig => sig.every((b, i) => f.data[i] === b)), `${label}: النوع غير مقبول (PDF أو صورة JPG/PNG/WEBP فقط)`);
+    return { name: trim(f.name).slice(0, 120) || 'مرفق', mime: f.mime, data: f.data };
+  };
   const checkPw = pw => need(pw && pw.length >= 6, 'كلمة المرور يجب ألا تقل عن 6 أحرف');
   const localISO = (date, hhmm) => { const [y, m, d] = date.split('-').map(Number), [h, mi] = hhmm.split(':').map(Number); return new Date(y, m - 1, d, h, mi).toISOString(); };
 
@@ -304,9 +330,12 @@ const Store = (() => {
       const actor = this.currentUser();
       need(canHr(actor), NO_HR);
       const f = {};
-      for (const k of ['empNo', 'name', 'nationalId', 'gender', 'birthDate', 'nationality', 'marital', 'phone', 'email', 'address',
+      for (const k of ['empNo', 'name', 'nameEn', 'nationalId', 'gender', 'birthDate', 'birthPlace', 'nationality', 'marital', 'phone', 'email', 'address',
         'empType', 'hireDate', 'status', 'emergencyName', 'emergencyPhone', 'notes']) f[k] = trim(e[k]);
       need(f.name.length >= 3, 'أدخل الاسم الكامل للموظف');
+      need(!f.nameEn || /^[A-Za-z][A-Za-z .'-]{2,}$/.test(f.nameEn), 'الاسم بالإنجليزية يجب أن يكون بأحرف إنجليزية فقط');
+      need(!f.gender || ['ذكر', 'أنثى'].includes(f.gender), 'اختر الجنس');
+      need(!f.nationalId || /^[0-9A-Za-z-]{6,20}$/.test(f.nationalId), 'رقم الهوية يجب أن يكون من 6 إلى 20 خانة');
       need(['active', 'leave', 'terminated'].includes(f.status), 'اختر حالة الموظف');
       need(!f.email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email), 'البريد الإلكتروني غير صحيح');
       need(!f.phone || /^[+\d][\d\s-]{6,19}$/.test(f.phone), 'رقم الهاتف غير صحيح');
@@ -331,6 +360,16 @@ const Store = (() => {
       // القسم والمسمى الوظيفي من الأدلة (يُحفظ اسمهما أيضاً للعرض والتصدير)
       const departmentId = trim(e.departmentId) || null, jobTitleId = trim(e.jobTitleId) || null, managerId = trim(e.managerId) || null;
       f.department = ''; f.jobTitle = '';
+      // الحقول الإلزامية: عند الإضافة كلها مطلوبة، وعند التعديل لا تُفرَّغ قيمة كانت موجودة (الملفات القديمة الناقصة لا تُجبَر على الاكتمال)
+      const prev = id ? all(`${EMP} WHERE id = ?`, [id])[0] : null;
+      const req = (value, prevValue, msg) => need(value || (prev && !prevValue), msg);
+      req(f.nameEn, prev?.nameEn, 'أدخل الاسم بالإنجليزية');
+      req(f.birthDate, prev?.birthDate, 'أدخل تاريخ الميلاد');
+      req(f.nationalId, prev?.nationalId, 'أدخل رقم الهوية');
+      req(f.gender, prev?.gender, 'اختر الجنس');
+      req(departmentId, prev?.departmentId, 'اختر القسم');
+      req(jobTitleId, prev?.jobTitleId, 'اختر المسمى الوظيفي');
+      req(f.hireDate, prev?.hireDate, 'أدخل تاريخ التعيين');
       if (departmentId) { const d = all('SELECT name FROM departments WHERE id = ?', [departmentId])[0]; need(d, 'القسم غير موجود'); f.department = d.name; }
       if (jobTitleId) { const t = all('SELECT name FROM job_titles WHERE id = ?', [jobTitleId])[0]; need(t, 'المسمى الوظيفي غير موجود'); f.jobTitle = t.name; }
       if (managerId) { // الرئيس المباشر: لا يكون الموظف نفسه، ولا منتهي الخدمة، ولا يُنشئ حلقة في التسلسل
@@ -347,6 +386,7 @@ const Store = (() => {
         const dupId = all('SELECT id FROM employees WHERE national_id = ?', [f.nationalId])[0];
         need(!dupId || dupId.id === id, 'رقم الهوية مسجّل لموظف آخر');
       }
+      const extras = this._cleanExtras(e); // مؤهلات ودورات وخبرات ومرفقات (تُتحقق قبل أي كتابة)
       // حساب دخول تلقائي: اسم المستخدم وكلمة المرور المؤقتة = رقم الهوية، ويُطلب تغييرها عند أول دخول
       let newUser = null;
       if (e.createAccount && !userId) {
@@ -357,13 +397,15 @@ const Store = (() => {
       }
       const now = new Date().toISOString();
       if (newUser) run("INSERT INTO users (id, username, password, name, role, must_change) VALUES (?,?,?,?,'employee',1)", [newUser.id, f.nationalId, newUser.hash, f.name]);
+      const empId = id || uid();
       const vals = [f.empNo, f.name, f.nationalId || null, f.gender, f.birthDate, f.nationality, f.marital, f.phone, f.email, f.address,
-        f.department, f.jobTitle, f.empType, f.hireDate, salary, f.status, f.emergencyName, f.emergencyPhone, f.notes, userId, departmentId, jobTitleId, managerId];
+        f.department, f.jobTitle, f.empType, f.hireDate, salary, f.status, f.emergencyName, f.emergencyPhone, f.notes, userId, departmentId, jobTitleId, managerId, f.nameEn, f.birthPlace];
       if (id) run(`UPDATE employees SET emp_no=?, name=?, national_id=?, gender=?, birth_date=?, nationality=?, marital=?, phone=?, email=?, address=?,
-        department=?, job_title=?, emp_type=?, hire_date=?, salary=?, status=?, emergency_name=?, emergency_phone=?, notes=?, user_id=?, department_id=?, job_title_id=?, manager_id=?, updated_at=? WHERE id=?`, [...vals, now, id]);
+        department=?, job_title=?, emp_type=?, hire_date=?, salary=?, status=?, emergency_name=?, emergency_phone=?, notes=?, user_id=?, department_id=?, job_title_id=?, manager_id=?, name_en=?, birth_place=?, updated_at=? WHERE id=?`, [...vals, now, id]);
       else run(`INSERT INTO employees (emp_no, name, national_id, gender, birth_date, nationality, marital, phone, email, address, department, job_title,
-        emp_type, hire_date, salary, status, emergency_name, emergency_phone, notes, user_id, department_id, job_title_id, manager_id, id, created_at, updated_at) VALUES (${'?,'.repeat(25)}?)`, [...vals, uid(), now, now]);
+        emp_type, hire_date, salary, status, emergency_name, emergency_phone, notes, user_id, department_id, job_title_id, manager_id, name_en, birth_place, id, created_at, updated_at) VALUES (${'?,'.repeat(27)}?)`, [...vals, empId, now, now]);
       if (!id) seqCommit('seq_employees', Number(f.empNo.match(/\d+$/)[0]));
+      this._writeExtras(empId, extras, now);
       await persist();
       return { accountCreated: newUser ? f.nationalId : null };
     },
@@ -371,11 +413,94 @@ const Store = (() => {
       const actor = this.currentUser();
       need(canHr(actor), NO_HR);
       need(isAdmin(actor) || !ownsEmployee(actor, id), SELF_HR);
-      run('DELETE FROM contracts WHERE employee_id = ?', [id]);
+      for (const t of ['contracts', 'qualifications', 'courses', 'experiences', 'documents']) run(`DELETE FROM ${t} WHERE employee_id = ?`, [id]);
       run('UPDATE employees SET manager_id = NULL WHERE manager_id = ?', [id]); // مرؤوسوه بلا رئيس حتى يُسند لهم غيره
       run('UPDATE departments SET manager_id = NULL WHERE manager_id = ?', [id]);
       run('DELETE FROM employees WHERE id = ?', [id]);
       return persist();
+    },
+
+
+    // ---------- المؤهلات والدورات والخبرات والمرفقات ----------
+    // يتحقق من القوائم المرسلة ويعيدها منظفة (غير المرسلة = لا تغيير). الصفوف الفارغة تماماً تُتجاهل.
+    _cleanExtras(e) {
+      const blank = (o, keys) => keys.every(k => trim(o[k]) === '') && !o.file;
+      const date = (v, msg) => need(/^\d{4}-\d\d-\d\d$/.test(v), msg);
+      const out = {};
+      if (Array.isArray(e.qualifications)) {
+        const year = new Date().getFullYear();
+        out.qualifications = e.qualifications.filter(q => !blank(q, ['degree', 'major', 'university', 'gradYear', 'gpa'])).map((q, i) => {
+          const n = `المؤهل ${i + 1}`, r = { id: q.id || null, degree: trim(q.degree), major: trim(q.major), university: trim(q.university), gradYear: Number(q.gradYear), gpa: Number(q.gpa) };
+          need(r.degree, `${n}: اختر المؤهل العلمي`); need(r.major, `${n}: أدخل التخصص`); need(r.university, `${n}: أدخل الجامعة`);
+          need(Number.isInteger(r.gradYear) && r.gradYear >= 1950 && r.gradYear <= year + 1, `${n}: سنة التخرج غير صحيحة`);
+          need(trim(q.gpa) !== '' && Number.isFinite(r.gpa) && r.gpa > 0 && r.gpa <= 100, `${n}: المعدل يجب أن يكون رقماً بين 0 و100`);
+          r.file = q.file ? checkFile(q.file, `${n} (مرفق)`) : null; r.removeDoc = !!q.removeDoc;
+          return r;
+        });
+      }
+      if (Array.isArray(e.courses)) {
+        out.courses = e.courses.filter(c => !blank(c, ['name', 'hours', 'from', 'to', 'organizer'])).map((c, i) => {
+          const n = `الدورة ${i + 1}`, r = { id: c.id || null, name: trim(c.name), hours: Number(c.hours), from: trim(c.from), to: trim(c.to), organizer: trim(c.organizer) };
+          need(r.name, `${n}: أدخل اسم الدورة`);
+          need(trim(c.hours) !== '' && Number.isFinite(r.hours) && r.hours > 0, `${n}: عدد الساعات يجب أن يكون أكبر من صفر`);
+          date(r.from, `${n}: أدخل تاريخ البداية`); date(r.to, `${n}: أدخل تاريخ النهاية`);
+          need(r.to >= r.from, `${n}: تاريخ النهاية يجب ألا يسبق البداية`);
+          need(r.organizer, `${n}: أدخل الجهة المنظمة`);
+          return r;
+        });
+      }
+      if (Array.isArray(e.experiences)) {
+        out.experiences = e.experiences.filter(x => !blank(x, ['employer', 'jobTitle', 'from', 'to'])).map((x, i) => {
+          const n = `الخبرة ${i + 1}`, r = { id: x.id || null, employer: trim(x.employer), jobTitle: trim(x.jobTitle), from: trim(x.from), to: trim(x.to) };
+          need(r.employer, `${n}: أدخل اسم الجهة`); need(r.jobTitle, `${n}: أدخل المسمى الوظيفي`);
+          date(r.from, `${n}: أدخل تاريخ البداية`);
+          need(!r.to || (/^\d{4}-\d\d-\d\d$/.test(r.to) && r.to >= r.from), `${n}: تاريخ النهاية يجب ألا يسبق البداية`); // فارغ = حتى الآن
+          return r;
+        });
+      }
+      if (e.idDoc) out.idDoc = { file: e.idDoc.file ? checkFile(e.idDoc.file, 'صورة الهوية') : null, remove: !!e.idDoc.remove };
+      return out;
+    },
+    _writeExtras(empId, x, now) {
+      const putDoc = (kind, refId, f) => run('INSERT INTO documents (id, employee_id, kind, ref_id, name, mime, size, data, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+        [uid(), empId, kind, refId, f.name, f.mime, f.data.length, f.data, now]);
+      const dropDoc = (kind, refId) => run('DELETE FROM documents WHERE employee_id = ? AND kind = ? AND ref_id IS ?', [empId, kind, refId]);
+      // يزامن جدولاً فرعياً مع القائمة المرسلة: يحدّث الموجود ويضيف الجديد ويحذف ما حُذف من النموذج
+      const reconcile = (table, rows, write, after) => {
+        const have = new Set(all(`SELECT id FROM ${table} WHERE employee_id = ?`, [empId]).map(r => r.id)), keep = new Set();
+        for (const r of rows) {
+          const upd = !!(r.id && have.has(r.id)), rid = upd ? r.id : uid();
+          keep.add(rid); write(rid, upd, r); if (after) after(rid, r);
+        }
+        have.forEach(rid => { if (!keep.has(rid)) { run(`DELETE FROM ${table} WHERE id = ?`, [rid]); if (table === 'qualifications') dropDoc('qualification', rid); } });
+      };
+      if (x.qualifications) reconcile('qualifications', x.qualifications,
+        (rid, upd, q) => upd ? run('UPDATE qualifications SET degree=?, major=?, university=?, grad_year=?, gpa=? WHERE id=?', [q.degree, q.major, q.university, q.gradYear, q.gpa, rid])
+          : run('INSERT INTO qualifications (id, employee_id, degree, major, university, grad_year, gpa) VALUES (?,?,?,?,?,?,?)', [rid, empId, q.degree, q.major, q.university, q.gradYear, q.gpa]),
+        (rid, q) => { if (q.file) { dropDoc('qualification', rid); putDoc('qualification', rid, q.file); } else if (q.removeDoc) dropDoc('qualification', rid); });
+      if (x.courses) reconcile('courses', x.courses,
+        (rid, upd, c) => upd ? run('UPDATE courses SET name=?, hours=?, from_date=?, to_date=?, organizer=? WHERE id=?', [c.name, c.hours, c.from, c.to, c.organizer, rid])
+          : run('INSERT INTO courses (id, employee_id, name, hours, from_date, to_date, organizer) VALUES (?,?,?,?,?,?,?)', [rid, empId, c.name, c.hours, c.from, c.to, c.organizer]));
+      if (x.experiences) reconcile('experiences', x.experiences,
+        (rid, upd, r) => upd ? run('UPDATE experiences SET employer=?, job_title=?, from_date=?, to_date=? WHERE id=?', [r.employer, r.jobTitle, r.from, r.to || null, rid])
+          : run('INSERT INTO experiences (id, employee_id, employer, job_title, from_date, to_date) VALUES (?,?,?,?,?,?)', [rid, empId, r.employer, r.jobTitle, r.from, r.to || null]));
+      if (x.idDoc) { if (x.idDoc.file) { dropDoc('id', null); putDoc('id', null, x.idDoc.file); } else if (x.idDoc.remove) dropDoc('id', null); }
+    },
+    // ملف الموظف التفصيلي: مؤهلات ودورات وخبرات وبيانات المرفقات (بدون محتواها)
+    employeeDetails(id) {
+      need(canHr(this.currentUser()), NO_HR);
+      return {
+        qualifications: all('SELECT id, degree, major, university, grad_year AS gradYear, gpa FROM qualifications WHERE employee_id = ? ORDER BY grad_year DESC', [id]),
+        courses: all('SELECT id, name, hours, from_date AS "from", to_date AS "to", organizer FROM courses WHERE employee_id = ? ORDER BY from_date DESC', [id]),
+        experiences: all('SELECT id, employer, job_title AS jobTitle, from_date AS "from", to_date AS "to" FROM experiences WHERE employee_id = ? ORDER BY from_date DESC', [id]),
+        docs: all('SELECT id, kind, ref_id AS refId, name, mime, size FROM documents WHERE employee_id = ?', [id]),
+      };
+    },
+    getDocument(id) { // رابط تحميل المرفق
+      need(canHr(this.currentUser()), NO_HR);
+      const r = all('SELECT name, mime, data FROM documents WHERE id = ?', [id])[0];
+      need(r, 'المرفق غير موجود');
+      return { name: r.name, blob: new Blob([r.data], { type: r.mime }) };
     },
 
     // ---------- العقود ----------
