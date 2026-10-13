@@ -10,7 +10,7 @@ const Store = (() => {
     'تُطبَّق الأنظمة والقوانين السارية على كل ما لم يرد فيه نص في هذا العقد.',
   ].join('\n');
   const DEFAULTS = { workStart: '09:00', workEnd: '17:00', graceMin: '0', weekend: '5,6', // 5,6 = الجمعة والسبت
-    orgName: 'الجهة المتعاقدة', currency: 'ILS', contractTerms: DEFAULT_TERMS };
+    orgName: 'الجهة المتعاقدة', currency: 'ILS', contractTerms: DEFAULT_TERMS, annualLeave: '21', exitMonthlyHours: '8' };
   const IDB_NAME = 'attendance', IDB_STORE = 'files', IDB_KEY = 'db';
   const SCRIPT_BASE = document.currentScript.src.replace(/store\.js(\?.*)?$/, '');
   let SQL, db;
@@ -125,6 +125,12 @@ const Store = (() => {
     CREATE TABLE IF NOT EXISTS salary_grades (
       id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
       min_salary REAL NOT NULL, max_salary REAL NOT NULL, increment REAL NOT NULL DEFAULT 0, notes TEXT);
+    CREATE TABLE IF NOT EXISTS leave_requests (
+      id TEXT PRIMARY KEY, req_no TEXT NOT NULL UNIQUE, employee_id TEXT NOT NULL, kind TEXT NOT NULL, sub_type TEXT NOT NULL,
+      start_date TEXT NOT NULL, end_date TEXT NOT NULL, start_time TEXT, end_time TEXT, amount REAL NOT NULL DEFAULT 0,
+      destination TEXT, reason TEXT, status TEXT NOT NULL DEFAULT 'pending', decided_by TEXT, decided_at TEXT, decision_note TEXT,
+      created_by TEXT, created_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_lr_emp ON leave_requests(employee_id, start_date);
     CREATE TABLE IF NOT EXISTS job_titles (
       id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE,
       grade_id TEXT, description TEXT, active INTEGER NOT NULL DEFAULT 1);
@@ -242,6 +248,11 @@ const Store = (() => {
     project_code AS projectCode, project_name AS projectName, project_name_en AS projectNameEn, supervisor_id AS supervisorId, work_desc AS workDesc,
     work_desc_en AS workDescEn, inclusions FROM contracts`;
   const FAR = '9999-12-31';
+  // الإجازات ومهمات العمل والمغادرات الخاصة
+  const REQ_TYPES = { leave: ['سنوية', 'مرضية', 'طارئة', 'أمومة', 'زواج', 'وفاة قريب', 'حج وعمرة', 'دراسية', 'بدون راتب'], mission: ['داخل المحافظة', 'خارج المحافظة', 'خارج البلاد'], exit: ['خاصة', 'صحية', 'عائلية'] };
+  const REQ_PREFIX = { leave: 'LV', mission: 'MS', exit: 'EX' };
+  const REQ = `SELECT id, req_no AS reqNo, employee_id AS employeeId, kind, sub_type AS subType, start_date AS startDate, end_date AS endDate, start_time AS startTime,
+    end_time AS endTime, amount, destination, reason, status, decided_by AS decidedBy, decided_at AS decidedAt, decision_note AS decisionNote, created_at AS createdAt FROM leave_requests`;
   const CONTRACT_TYPES = ['دائم', 'محدد المدة', 'تجريبي', 'موسمي', 'دوام جزئي'];
   const PAY_BASES = ['monthly', 'daily', 'volunteer']; // شهري / يومي / متطوع
   const SELF_HR = 'لا يمكنك تعديل ملفك الشخصي أو عقدك بنفسك';
@@ -282,7 +293,10 @@ const Store = (() => {
       need(orgName.length >= 2 && orgName.length <= 120, 'أدخل اسم الجهة المتعاقدة (2 إلى 120 حرفاً)');
       need(CURRENCIES[currency], 'اختر عملة صحيحة');
       need(terms.length <= 4000, 'نص بنود العقد طويل جداً (الحد 4000 حرف)');
-      const merged = { workStart: next.workStart, workEnd: next.workEnd, graceMin: String(grace), weekend: next.weekend, orgName, currency, contractTerms: terms };
+      const al = next.annualLeave === undefined ? Number(cfg.annualLeave) : Number(next.annualLeave), eh = next.exitMonthlyHours === undefined ? Number(cfg.exitMonthlyHours) : Number(next.exitMonthlyHours);
+      need(Number.isFinite(al) && al >= 0 && al <= 365, 'رصيد الإجازة السنوية بين 0 و365 يوماً');
+      need(Number.isFinite(eh) && eh >= 0 && eh <= 200, 'حد ساعات المغادرات الشهري بين 0 و200 ساعة');
+      const merged = { workStart: next.workStart, workEnd: next.workEnd, graceMin: String(grace), weekend: next.weekend, orgName, currency, contractTerms: terms, annualLeave: String(al), exitMonthlyHours: String(eh) };
       for (const [k, v] of Object.entries(merged)) run('INSERT OR REPLACE INTO settings VALUES (?,?)', [k, v]);
       cfg = merged;
       return persist();
@@ -445,7 +459,7 @@ const Store = (() => {
       const actor = this.currentUser();
       need(canHr(actor), NO_HR);
       need(isAdmin(actor) || !ownsEmployee(actor, id), SELF_HR);
-      for (const t of ['contracts', 'qualifications', 'courses', 'experiences', 'documents']) run(`DELETE FROM ${t} WHERE employee_id = ?`, [id]);
+      for (const t of ['contracts', 'qualifications', 'courses', 'experiences', 'documents', 'leave_requests']) run(`DELETE FROM ${t} WHERE employee_id = ?`, [id]);
       run('UPDATE employees SET manager_id = NULL WHERE manager_id = ?', [id]); // مرؤوسوه بلا رئيس حتى يُسند لهم غيره
       run('UPDATE departments SET manager_id = NULL WHERE manager_id = ?', [id]);
       run('DELETE FROM employees WHERE id = ?', [id]);
@@ -536,7 +550,7 @@ const Store = (() => {
     },
 
     // ---------- العقود ----------
-    contractTypes: CONTRACT_TYPES, payBases: PAY_BASES, currencies: CURRENCIES,
+    contractTypes: CONTRACT_TYPES, payBases: PAY_BASES, currencies: CURRENCIES, requestTypes: REQ_TYPES,
     // بيانات مستند العقد للطباعة: للموارد البشرية أو لصاحب العقد نفسه
     contractDocument(id) {
       const me = this.currentUser();
@@ -810,6 +824,110 @@ const Store = (() => {
       return emp ? all(`${CONTRACT} WHERE employee_id = ? ORDER BY start_date DESC`, [emp.id]) : [];
     },
 
+    // ---------- الإجازات ومهمات العمل والمغادرات الخاصة ----------
+    // أيام العمل (بلا عطلة نهاية الأسبوع) بين تاريخين شاملين
+    workDaysBetween(from, to) {
+      let n = 0;
+      for (let d = new Date(from + 'T00:00:00'), end = new Date(to + 'T00:00:00'); d <= end; d.setDate(d.getDate() + 1)) if (!this.isWeekend(dateKey(d))) n++;
+      return n;
+    },
+    // طلبات الموارد البشرية كلها؛ ولغيرها طلبات ملفه فقط
+    requests(kind) {
+      const me = this.currentUser(); need(me && !me.mustChange, MUST_CHANGE);
+      const k = kind ? ' AND kind = ?' : '', ps = kind ? [kind] : [];
+      if (canHr(me)) return all(`${REQ} WHERE 1=1${k} ORDER BY created_at DESC, req_no DESC`, ps);
+      return all(`${REQ} WHERE employee_id IN (SELECT id FROM employees WHERE user_id = ?)${k} ORDER BY created_at DESC, req_no DESC`, [me.id, ...ps]);
+    },
+    // رصيد الإجازة السنوية للموظف في سنة معيّنة
+    leaveBalance(employeeId, year = new Date().getFullYear()) {
+      const me = this.currentUser(); need(me && !me.mustChange, MUST_CHANGE);
+      need(canHr(me) || ownsEmployee(me, employeeId), NO_HR);
+      const sum = st => all("SELECT COALESCE(SUM(amount),0) AS n FROM leave_requests WHERE employee_id = ? AND kind = 'leave' AND sub_type = 'سنوية' AND status = ? AND substr(start_date,1,4) = ?", [employeeId, st, String(year)])[0].n;
+      const total = Number(cfg.annualLeave), used = sum('approved'), pending = sum('pending');
+      return { total, used, pending, remaining: total - used - pending };
+    },
+    exitHoursInMonth(employeeId, month, exceptId = '') {
+      return all("SELECT COALESCE(SUM(amount),0) AS n FROM leave_requests WHERE employee_id = ? AND kind = 'exit' AND status IN ('pending','approved') AND substr(start_date,1,7) = ? AND id != ?", [employeeId, month, exceptId])[0].n;
+    },
+    // تقديم طلب: الموظف لنفسه، أو الموارد البشرية نيابة عن موظف (empId)
+    async saveRequest(r) {
+      const actor = this.currentUser(); need(actor && !actor.mustChange, MUST_CHANGE);
+      const kind = trim(r.kind); need(REQ_TYPES[kind], 'اختر نوع الطلب');
+      let empId = trim(r.employeeId);
+      if (!empId || ownsEmployee(actor, empId)) empId = all('SELECT id FROM employees WHERE user_id = ?', [actor.id])[0]?.id;
+      else need(canHr(actor), 'لا يمكنك تقديم طلب باسم موظف آخر');
+      need(empId, 'حسابك غير مرتبط بملف موظف');
+      const emp = all('SELECT status FROM employees WHERE id = ?', [empId])[0]; need(emp, 'الموظف غير موجود');
+      need(emp.status !== 'terminated', 'لا يمكن تقديم طلب لموظف منتهي الخدمة');
+      const sub = trim(r.subType); need(REQ_TYPES[kind].includes(sub), 'اختر النوع');
+      const start = trim(r.startDate), D = /^\d{4}-\d\d-\d\d$/, T = /^\d\d:\d\d$/, reason = trim(r.reason), dest = trim(r.destination);
+      need(D.test(start), 'أدخل التاريخ');
+      need(reason.length >= 3, kind === 'mission' ? 'أدخل غرض المهمة' : 'أدخل السبب');
+      need(reason.length <= 500 && dest.length <= 200, 'النص طويل جداً');
+      let end = start, st = null, et = null, amount;
+      if (kind === 'exit') {
+        st = trim(r.startTime); et = trim(r.endTime);
+        need(T.test(st) && T.test(et), 'أدخل وقت المغادرة والعودة');
+        need(et > st, 'وقت العودة يجب أن يلي وقت المغادرة');
+        const mins = (Number(et.slice(0, 2)) * 60 + Number(et.slice(3))) - (Number(st.slice(0, 2)) * 60 + Number(st.slice(3)));
+        amount = Math.round(mins / 60 * 100) / 100;
+        need(amount <= 4, 'المغادرة الخاصة لا تتجاوز 4 ساعات في المرة الواحدة');
+        need(!this.isWeekend(start), 'التاريخ يوافق عطلة نهاية الأسبوع');
+        const used = this.exitHoursInMonth(empId, start.slice(0, 7));
+        need(used + amount <= Number(cfg.exitMonthlyHours), `يتجاوز الحد الشهري للمغادرات (${cfg.exitMonthlyHours} ساعات، المستهلك ${used})`);
+        const clash = all("SELECT 1 FROM leave_requests WHERE employee_id = ? AND kind = 'exit' AND status IN ('pending','approved') AND start_date = ? AND start_time < ? AND end_time > ?", [empId, start, et, st]);
+        need(!clash.length, 'يتداخل مع مغادرة أخرى في الوقت نفسه');
+      } else {
+        end = trim(r.endDate) || start; need(D.test(end), 'أدخل تاريخ النهاية');
+        need(end >= start, 'تاريخ النهاية يجب ألا يسبق تاريخ البداية');
+        amount = this.workDaysBetween(start, end);
+        need(amount >= 1, 'الفترة كلها عطلة نهاية أسبوع');
+        if (kind === 'mission') need(dest.length >= 2, 'أدخل وجهة المهمة');
+        if (kind === 'leave' && sub === 'سنوية') {
+          const b = this.leaveBalance(empId, Number(start.slice(0, 4)));
+          need(amount <= b.remaining, `رصيد الإجازة السنوية غير كافٍ (المتبقي ${b.remaining} يوماً)`);
+        }
+      }
+      // لا تتداخل إجازة/مهمة مع أخرى لنفس الموظف؛ ولا تقع مغادرة في يوم إجازة/مهمة
+      const clash = all("SELECT req_no AS n FROM leave_requests WHERE employee_id = ? AND kind != 'exit' AND status IN ('pending','approved') AND start_date <= ? AND end_date >= ?", [empId, end, start])[0];
+      need(!clash, `يتداخل مع الطلب ${clash?.n} لنفس الموظف`);
+      if (kind === 'exit') need(!all("SELECT 1 FROM leave_requests WHERE employee_id = ? AND kind != 'exit' AND status IN ('pending','approved') AND start_date <= ? AND end_date >= ?", [empId, start, start]).length, 'للموظف إجازة أو مهمة في هذا اليوم');
+      else need(!all("SELECT 1 FROM leave_requests WHERE employee_id = ? AND kind = 'exit' AND status IN ('pending','approved') AND start_date BETWEEN ? AND ?", [empId, start, end]).length, 'للموظف مغادرة في هذه الفترة');
+      const n = seqNext('seq_requests', 'leave_requests', 'req_no'), no = `${REQ_PREFIX[kind]}-${String(n).padStart(4, '0')}`, id = uid();
+      run('INSERT INTO leave_requests (id, req_no, employee_id, kind, sub_type, start_date, end_date, start_time, end_time, amount, destination, reason, status, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [id, no, empId, kind, sub, start, end, st, et, amount, dest, reason, 'pending', actor.id, new Date().toISOString()]);
+      seqCommit('seq_requests', n);
+      await persist();
+      return { id, reqNo: no };
+    },
+    // اعتماد أو رفض (الموارد البشرية؛ ولا يعتمد غير المدير طلب نفسه)
+    async decideRequest(id, approve, note) {
+      const actor = this.currentUser(); need(canHr(actor), NO_HR);
+      const r = all(`${REQ} WHERE id = ?`, [id])[0]; need(r, 'الطلب غير موجود');
+      need(r.status === 'pending', 'تم البت في هذا الطلب مسبقاً');
+      need(isAdmin(actor) || !ownsEmployee(actor, r.employeeId), 'لا يمكنك البت في طلبك بنفسك');
+      note = trim(note); need(approve || note.length >= 3, 'أدخل سبب الرفض');
+      if (approve && r.kind === 'leave' && r.subType === 'سنوية') { // إعادة فحص الرصيد (المعلّق محسوب مسبقاً)
+        const b = this.leaveBalance(r.employeeId, Number(r.startDate.slice(0, 4))); need(b.remaining >= 0, 'رصيد الإجازة السنوية غير كافٍ');
+      }
+      run('UPDATE leave_requests SET status = ?, decided_by = ?, decided_at = ?, decision_note = ? WHERE id = ?', [approve ? 'approved' : 'rejected', actor.id, new Date().toISOString(), note, id]);
+      return persist();
+    },
+    // إلغاء: صاحب الطلب (قبل البت) أو الموارد البشرية (قبل البت أو بعد الاعتماد)
+    async cancelRequest(id) {
+      const actor = this.currentUser(); need(actor && !actor.mustChange, MUST_CHANGE);
+      const r = all(`${REQ} WHERE id = ?`, [id])[0]; need(r, 'الطلب غير موجود');
+      const mine = ownsEmployee(actor, r.employeeId);
+      need(mine || canHr(actor), 'لا يمكنك إلغاء هذا الطلب');
+      need(r.status === 'pending' || (r.status === 'approved' && canHr(actor) && (isAdmin(actor) || !mine)), 'لا يمكن إلغاء هذا الطلب في حالته الحالية');
+      run("UPDATE leave_requests SET status = 'cancelled', decided_by = COALESCE(decided_by, ?), decided_at = COALESCE(decided_at, ?) WHERE id = ?", [actor.id, new Date().toISOString(), id]);
+      return persist();
+    },
+    // طلب معتمد يغطي التاريخ (للعرض في الحضور)
+    approvedOn(employeeId, date) {
+      return all(`${REQ} WHERE employee_id = ? AND status = 'approved' AND start_date <= ? AND end_date >= ?`, [employeeId, date, date]);
+    },
+
     // ---------- الحضور ----------
     todayRecord: userId => all(`${REC} WHERE user_id = ? AND date = ?`, [userId, dateKey(new Date())])[0] || null,
     checkIn(userId) {
@@ -1040,6 +1158,24 @@ const Store = (() => {
           recs++;
         }
       }
+      // ----- إجازات ومهمات ومغادرات -----
+      let rq = 0;
+      const addReq = (k, kind, sub, from, to, status, o = {}) => {
+        rq++;
+        const days = kind === 'exit' ? 0 : this.workDaysBetween(from, to), hrs = kind === 'exit' ? o.hours : days;
+        run('INSERT INTO leave_requests (id, req_no, employee_id, kind, sub_type, start_date, end_date, start_time, end_time, amount, destination, reason, status, decided_by, decided_at, decision_note, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [D + 'lr_' + rq, `${REQ_PREFIX[kind]}-${String(rq).padStart(4, '0')}`, emp[k].id, kind, sub, from, to, o.st || null, o.et || null, hrs, o.dest || '', o.reason, status,
+            status === 'pending' ? null : accountOf.salim || null, status === 'pending' ? null : iso, o.note || '', accountOf[k] || null, iso]);
+      };
+      addReq('ahmed', 'leave', 'سنوية', rel(-40), rel(-36), 'approved', { reason: 'إجازة عائلية' });
+      addReq('ahmed', 'leave', 'سنوية', rel(10), rel(14), 'pending', { reason: 'سفر مع العائلة' });
+      addReq('laila', 'leave', 'مرضية', rel(-9), rel(-8), 'approved', { reason: 'وعكة صحية (تقرير طبي)' });
+      addReq('sara', 'leave', 'سنوية', rel(20), rel(24), 'rejected', { reason: 'إجازة', note: 'تزامنها مع تسليم المشروع' });
+      addReq('nadine', 'mission', 'خارج المحافظة', rel(5), rel(6), 'approved', { dest: 'رام الله', reason: 'حضور اجتماع تنسيقي مع الشركاء' });
+      addReq('salim', 'mission', 'داخل المحافظة', rel(-3), rel(-3), 'approved', { dest: 'مقر الوزارة', reason: 'مراجعة اتفاقية التمويل' });
+      addReq('ahmed', 'exit', 'خاصة', rel(2), rel(2), 'pending', { st: '11:00', et: '13:00', hours: 2, reason: 'مراجعة بنك' });
+      addReq('laila', 'exit', 'صحية', rel(-5), rel(-5), 'approved', { st: '10:00', et: '11:30', hours: 1.5, reason: 'موعد طبيب' });
+      seqCommit('seq_requests', rq);
       run("INSERT OR REPLACE INTO settings VALUES ('demo_loaded', ?)", [iso]);
       db.exec('COMMIT');
       await persist();
@@ -1049,7 +1185,7 @@ const Store = (() => {
     async removeDemoData() {
       need(isAdmin(this.currentUser()), ADMIN_ONLY);
       need(this.demoStatus().loaded, 'لا توجد بيانات تجريبية محمّلة');
-      for (const t of ['documents', 'qualifications', 'courses', 'experiences', 'contracts']) run(`DELETE FROM ${t} WHERE id LIKE 'demo_%' OR employee_id LIKE 'demo_%'`);
+      for (const t of ['documents', 'qualifications', 'courses', 'experiences', 'contracts', 'leave_requests']) run(`DELETE FROM ${t} WHERE id LIKE 'demo_%' OR employee_id LIKE 'demo_%'`);
       run("DELETE FROM records WHERE id LIKE 'demo_%'");
       run("UPDATE departments SET manager_id = NULL WHERE manager_id LIKE 'demo_%'");
       run("UPDATE employees SET manager_id = NULL WHERE manager_id LIKE 'demo_%'");

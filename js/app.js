@@ -788,7 +788,7 @@ function renderDemo() {
 function renderSettings() {
   renderDemo();
   const s = Store.settings, off = s.weekend.split(',');
-  $('setStart').value = s.workStart; $('setEnd').value = s.workEnd; $('setGrace').value = s.graceMin;
+  $('setStart').value = s.workStart; $('setEnd').value = s.workEnd; $('setGrace').value = s.graceMin; $('setAnnual').value = s.annualLeave; $('setExitHrs').value = s.exitMonthlyHours;
   $('setOrg').value = s.orgName; $('setTerms').value = s.contractTerms;
   $('setCurrency').replaceChildren(...Object.entries(Store.currencies).map(([k, v]) => new Option(v, k))); $('setCurrency').value = s.currency;
   $('setWeekend').replaceChildren(...DAY_NAMES.map((name, i) => {
@@ -799,13 +799,92 @@ function renderSettings() {
 }
 
 // ---------- التنقل والقائمة الجانبية ----------
+// ===== الإجازات ومهمات العمل والمغادرات الخاصة =====
+const RQ = {
+  leave: { one: 'إجازة', add: 'طلب إجازة', sub: 'نوع الإجازة', reason: 'السبب', amt: 'الأيام' },
+  mission: { one: 'مهمة عمل', add: 'طلب مهمة عمل', sub: 'نوع المهمة', reason: 'غرض المهمة', amt: 'الأيام' },
+  exit: { one: 'مغادرة خاصة', add: 'طلب مغادرة خاصة', sub: 'نوع المغادرة', reason: 'السبب', amt: 'الساعات' } };
+const RQ_STATUS = { pending: ['بانتظار الاعتماد', 'late'], approved: ['معتمد', ''], rejected: ['مرفوض', 'bad'], cancelled: ['ملغى', 'off'] };
+let rqTab = 'leave', rqCache = [], rqNames = {};
+function renderRequests() {
+  hideAlert('requestsMsg');
+  const hr = Store.canHr(me);
+  rqNames = hr ? Object.fromEntries(Store.employees().map(e => [e.id, e.name])) : {};
+  rqCache = Store.requests();
+  const by = k => rqCache.filter(r => r.kind === k);
+  $('rnLeave').textContent = by('leave').length; $('rnMission').textContent = by('mission').length; $('rnExit').textContent = by('exit').length;
+  document.querySelectorAll('[data-rq]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.rq === rqTab)));
+  $('addRequestLbl').textContent = RQ[rqTab].add;
+  const mine = by(rqTab), count = st => mine.filter(r => r.status === st).length;
+  $('rPending').textContent = count('pending'); $('rApproved').textContent = count('approved'); $('rRejected').textContent = count('rejected');
+  const own = Store.employeeOfUser(me.id);
+  $('rBalCard').classList.toggle('hidden', !(rqTab === 'leave' && own));
+  if (rqTab === 'leave' && own) { const b = Store.leaveBalance(own.id); $('rBalance').textContent = b.remaining; $('rBalLbl').textContent = `رصيدي المتبقي من ${b.total} يوماً (إجازة سنوية)`; }
+  const q = $('rSearch').value.trim().toLowerCase(), st = $('rStatus').value;
+  const rows = mine.filter(r => (!st || r.status === st) && (!q || `${rqNames[r.employeeId] || ''} ${r.reqNo} ${r.reason} ${r.destination}`.toLowerCase().includes(q)));
+  const heads = [hr && 'الموظف', 'رقم الطلب', 'النوع', rqTab === 'exit' ? 'التاريخ والوقت' : 'الفترة', RQ[rqTab].amt, rqTab === 'mission' ? 'الوجهة والغرض' : 'السبب', 'الحالة'].filter(Boolean);
+  const thead = $('requestsHead'); thead.replaceChildren(); const tr0 = document.createElement('tr');
+  [...heads, ''].forEach((h, i, a) => { const th = document.createElement('th'); th.textContent = h; if (i === a.length - 1) th.className = 'no-print'; tr0.appendChild(th); }); thead.appendChild(tr0);
+  fillRows($('requestsBody'), rows, (tr, r) => {
+    if (hr) cell(tr, rqNames[r.employeeId] || '—');
+    numCell(tr, r.reqNo); cell(tr, r.subType);
+    if (r.kind === 'exit') { const td = cell(tr, ''); const d = document.createElement('span'); d.className = 'num'; d.textContent = `${r.startDate}  ${r.startTime} – ${r.endTime}`; td.appendChild(d); }
+    else periodCell(tr, r.startDate, r.endDate);
+    numCell(tr, r.amount);
+    subCell(tr, r.kind === 'mission' ? r.destination : r.reason, r.kind === 'mission' ? r.reason : '');
+    const td = document.createElement('td'), b = document.createElement('span'); b.className = 'badge ' + RQ_STATUS[r.status][1]; b.textContent = RQ_STATUS[r.status][0]; td.appendChild(b);
+    if (r.decisionNote) { const sp = document.createElement('span'); sp.className = 'cell-sub'; sp.textContent = r.decisionNote; td.appendChild(sp); }
+    tr.appendChild(td);
+    const btns = [], own = Store.employeeOfUser(me.id)?.id === r.employeeId;
+    if (r.status === 'pending' && hr && (me.role === 'admin' || !own)) {
+      btns.push(iconBtn('check', 'اعتماد الطلب', async () => { hideAlert('requestsMsg'); try { await Store.decideRequest(r.id, true); renderRequests(); } catch (e) { showAlert('requestsMsg', e.message); } }),
+        iconBtn('ban', 'رفض الطلب', () => { $('rejectForm').dataset.id = r.id; $('rejectNote').value = ''; hideAlert('rejectMsg'); $('rejectDialog').showModal(); $('rejectNote').focus(); }, true));
+    }
+    if (r.status === 'pending' ? (own || hr) : (r.status === 'approved' && hr && (me.role === 'admin' || !own))) {
+      btns.push(iconBtn('x', 'إلغاء الطلب', async () => {
+        hideAlert('requestsMsg'); if (!confirm(`إلغاء الطلب ${r.reqNo}؟`)) return;
+        try { await Store.cancelRequest(r.id); renderRequests(); } catch (e) { showAlert('requestsMsg', e.message); }
+      }, true));
+    }
+    actionsCell(tr, ...btns);
+  }, `لا توجد طلبات ${RQ[rqTab].one === 'إجازة' ? 'إجازات' : RQ[rqTab].one === 'مهمة عمل' ? 'مهمات' : 'مغادرات'} بعد`, heads.length + 1);
+}
+function updateRequestHint() {
+  const box = $('rHint'); box.className = 'hint-line'; box.textContent = '';
+  const s = $('r_startDate').value, e = $('r_endDate').value || s;
+  if (rqTab === 'exit') {
+    const a = $('r_startTime').value, b = $('r_endTime').value;
+    if (a && b && b > a) { const h = ((Number(b.slice(0, 2)) * 60 + Number(b.slice(3))) - (Number(a.slice(0, 2)) * 60 + Number(a.slice(3)))) / 60; box.textContent = `مدة المغادرة: ${Math.round(h * 100) / 100} ساعة`; if (h > 4) box.classList.add('warn'); }
+    return;
+  }
+  if (!s || !e || e < s) return;
+  box.textContent = `عدد أيام العمل: ${Store.workDaysBetween(s, e)} (لا تُحتسب عطلة نهاية الأسبوع)`;
+  const empId = $('r_employeeId').value || Store.employeeOfUser(me.id)?.id;
+  if (rqTab === 'leave' && $('r_subType').value === 'سنوية' && empId) { try { const bl = Store.leaveBalance(empId, Number(s.slice(0, 4))); box.textContent += ` — رصيدك المتبقي ${bl.remaining} يوماً`; } catch {} }
+}
+function openRequestDialog() {
+  hideAlert('requestMsg'); $('requestForm').reset();
+  const dlg = $('requestDialog'), hr = Store.canHr(me);
+  dlg.classList.remove('k-leave', 'k-mission', 'k-exit'); dlg.classList.add('k-' + rqTab);
+  $('requestTitle').textContent = RQ[rqTab].add;
+  $('r_subLbl').textContent = RQ[rqTab].sub + ' *'; $('r_reasonLbl').textContent = RQ[rqTab].reason + ' *';
+  $('r_startLbl').textContent = rqTab === 'exit' ? 'التاريخ *' : 'من تاريخ *';
+  $('r_subType').replaceChildren(...Store.requestTypes[rqTab].map(t => new Option(t)));
+  dlg.querySelector('.rq-hr').classList.toggle('hidden', !hr);
+  if (hr) {
+    const own = Store.employeeOfUser(me.id)?.id;
+    $('r_employeeId').replaceChildren(new Option(own ? 'أنا (ملفي)' : '-- اختر الموظف --', own || ''), ...Store.employees().filter(e => e.status !== 'terminated' && e.id !== own).map(e => new Option(`${e.empNo} — ${e.name}`, e.id)));
+  }
+  $('r_startDate').value = Store.dateKey(new Date());
+  updateRequestHint(); dlg.showModal();
+}
 const RENDER = { contracts: renderContracts, hr: renderHr, titles: renderTitles, grades: renderGrades, org: renderOrg,
-  me: () => { renderToday(); renderMyContract(); renderMine(); }, daily: renderAdmin, report: renderReport, users: renderUsers, settings: renderSettings };
+  me: () => { renderToday(); renderMyContract(); renderMine(); }, requests: renderRequests, daily: renderAdmin, report: renderReport, users: renderUsers, settings: renderSettings };
 const HR_TABS = ['hr', 'contracts', 'titles', 'grades', 'org'];
-const PAGES = { me: ['لوحتي', ''], hr: ['ملفات الموظفين', 'شؤون الموظفين'], contracts: ['العقود', 'شؤون الموظفين'], titles: ['المسميات الوظيفية', 'شؤون الموظفين'],
+const PAGES = { me: ['لوحتي', ''], requests: ['الإجازات والمغادرات', 'الطلبات'], hr: ['ملفات الموظفين', 'شؤون الموظفين'], contracts: ['العقود', 'شؤون الموظفين'], titles: ['المسميات الوظيفية', 'شؤون الموظفين'],
   grades: ['سلم الرواتب', 'شؤون الموظفين'], org: ['الهيكل التنظيمي', 'شؤون الموظفين'], daily: ['الحضور اليومي', 'الحضور والانصراف'],
   report: ['التقارير الشهرية', 'الحضور والانصراف'], users: ['حسابات المستخدمين', 'النظام'], settings: ['الإعدادات', 'النظام'] };
-const canView = name => me.role === 'admin' || name === 'me' || (HR_TABS.includes(name) && Store.canHr(me)) || (name === 'daily' && Store.canEditAttendance(me));
+const canView = name => me.role === 'admin' || name === 'me' || name === 'requests' || (HR_TABS.includes(name) && Store.canHr(me)) || (name === 'daily' && Store.canEditAttendance(me));
 
 function showTab(name) {
   if (!RENDER[name] || !canView(name)) name = 'me';
@@ -913,6 +992,21 @@ function init() {
     } catch (err) { showAlert('pwMsg', err.message); }
   };
 
+  document.querySelectorAll('[data-rq]').forEach(b => b.addEventListener('click', () => { rqTab = b.dataset.rq; renderRequests(); }));
+  ['rSearch', 'rStatus'].forEach(id => $(id).addEventListener('input', renderRequests));
+  $('addRequest').onclick = openRequestDialog;
+  $('requestCancel').onclick = () => $('requestDialog').close();
+  ['r_startDate', 'r_endDate', 'r_startTime', 'r_endTime', 'r_subType', 'r_employeeId'].forEach(id => $(id).addEventListener('input', updateRequestHint));
+  $('requestForm').onsubmit = async e => {
+    e.preventDefault(); hideAlert('requestMsg');
+    const r = { kind: rqTab }; document.querySelectorAll('#requestForm [data-r]').forEach(el => { r[el.dataset.r] = el.value; });
+    try { await Store.saveRequest(r); $('requestDialog').close(); renderRequests(); } catch (err) { showAlert('requestMsg', err.message); }
+  };
+  $('rejectCancel').onclick = () => $('rejectDialog').close();
+  $('rejectForm').onsubmit = async e => {
+    e.preventDefault(); hideAlert('rejectMsg');
+    try { await Store.decideRequest(e.target.dataset.id, false, $('rejectNote').value); $('rejectDialog').close(); renderRequests(); } catch (err) { showAlert('rejectMsg', err.message); }
+  };
   if (Store.canHr(me)) {
     document.querySelectorAll('.hr-only').forEach(el => el.classList.remove('hidden'));
 
@@ -1048,7 +1142,7 @@ function init() {
     $('settingsForm').onsubmit = async e => {
       e.preventDefault(); hideAlert('setMsg'); $('setOk').classList.remove('show');
       try {
-        await Store.saveSettings({ workStart: $('setStart').value, workEnd: $('setEnd').value, graceMin: $('setGrace').value,
+        await Store.saveSettings({ workStart: $('setStart').value, workEnd: $('setEnd').value, graceMin: $('setGrace').value, annualLeave: $('setAnnual').value, exitMonthlyHours: $('setExitHrs').value,
           orgName: $('setOrg').value, currency: $('setCurrency').value, contractTerms: $('setTerms').value,
           weekend: [...$('setWeekend').querySelectorAll('input:checked')].map(c => c.value).join(',') });
         $('setOk').classList.add('show');

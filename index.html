@@ -23,6 +23,10 @@
                     <button class="nav-item" data-tab="me" data-label="لوحتي"><svg class="i"><use href="#i-home"/></svg><span class="nav-text">لوحتي</span></button>
                 </div>
                 <div class="nav-group" data-group>
+                    <div class="nav-label">الطلبات</div>
+                    <button class="nav-item" data-tab="requests" data-label="الإجازات والمغادرات"><svg class="i"><use href="#i-calendar-check"/></svg><span class="nav-text">الإجازات والمغادرات</span></button>
+                </div>
+                <div class="nav-group" data-group>
                     <div class="nav-label">شؤون الموظفين</div>
                 <button class="nav-item hr-only hidden" data-tab="hr" data-label="ملفات الموظفين"><svg class="i"><use href="#i-users"/></svg><span class="nav-text">ملفات الموظفين</span></button>
                 <button class="nav-item hr-only hidden" data-tab="contracts" data-label="العقود"><svg class="i"><use href="#i-file-text"/></svg><span class="nav-text">العقود</span></button>
@@ -129,6 +133,35 @@
                 </table></div>
                 <div class="alert" id="hrMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="hrMsgText"></span></div>
                 <div class="success" id="hrOk" role="status"><svg class="i"><use href="#i-check"/></svg><span id="hrOkText"></span></div>
+            </section>
+        </div>
+
+        <!-- الإجازات ومهمات العمل والمغادرات الخاصة -->
+        <div class="panel hidden" data-panel="requests">
+            <section class="stats-row" aria-label="ملخص الطلبات">
+                <div class="card stat"><div class="ico warn"><svg class="i"><use href="#i-timer"/></svg></div><div><b id="rPending">0</b><span>بانتظار الاعتماد</span></div></div>
+                <div class="card stat"><div class="ico ok"><svg class="i"><use href="#i-check"/></svg></div><div><b id="rApproved">0</b><span>معتمدة</span></div></div>
+                <div class="card stat"><div class="ico gold"><svg class="i"><use href="#i-ban"/></svg></div><div><b id="rRejected">0</b><span>مرفوضة</span></div></div>
+                <div class="card stat" id="rBalCard"><div class="ico"><svg class="i"><use href="#i-calendar-check"/></svg></div><div><b id="rBalance">0</b><span id="rBalLbl">رصيد الإجازة السنوية</span></div></div>
+            </section>
+            <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-calendar-check"/></svg>الإجازات والمهمات والمغادرات</h3>
+                    <button class="btn" id="addRequest"><svg class="i"><use href="#i-plus"/></svg><span id="addRequestLbl">طلب إجازة</span></button>
+                </div>
+                <div class="ct-tabs" role="tablist" aria-label="أنواع الطلبات">
+                    <button type="button" role="tab" data-rq="leave" aria-selected="true">الإجازات <span class="cnt" id="rnLeave">0</span></button>
+                    <button type="button" role="tab" data-rq="mission" aria-selected="false">مهمات العمل <span class="cnt" id="rnMission">0</span></button>
+                    <button type="button" role="tab" data-rq="exit" aria-selected="false">المغادرات الخاصة <span class="cnt" id="rnExit">0</span></button>
+                </div>
+                <div class="filters two">
+                    <div class="field"><label for="rSearch">بحث</label><input type="search" id="rSearch" placeholder="اسم الموظف أو رقم الطلب أو السبب"></div>
+                    <div class="field"><label for="rStatus">الحالة</label><select id="rStatus"><option value="">الكل</option><option value="pending">بانتظار الاعتماد</option><option value="approved">معتمد</option><option value="rejected">مرفوض</option><option value="cancelled">ملغى</option></select></div>
+                </div>
+                <div class="table-wrap"><table class="compact">
+                    <thead id="requestsHead"></thead>
+                    <tbody id="requestsBody"></tbody>
+                </table></div>
+                <div class="alert" id="requestsMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="requestsMsgText"></span></div>
             </section>
         </div>
 
@@ -280,6 +313,8 @@
                         <div class="field"><label for="setStart">بداية الدوام</label><input type="time" id="setStart" required></div>
                         <div class="field"><label for="setEnd">نهاية الدوام</label><input type="time" id="setEnd" required></div>
                         <div class="field"><label for="setGrace">مهلة التأخير (دقائق)</label><input type="number" id="setGrace" min="0" max="120" required></div>
+                        <div class="field"><label for="setAnnual">رصيد الإجازة السنوية (أيام)</label><input type="number" id="setAnnual" min="0" max="365" required></div>
+                        <div class="field"><label for="setExitHrs">حد المغادرات الشهري (ساعات)</label><input type="number" id="setExitHrs" min="0" max="200" step="0.5" required></div>
                     </div>
                     <div class="form-grid" style="margin-top:16px">
                         <div class="field span2"><label for="setOrg">اسم الجهة المتعاقدة (يظهر في العقود المطبوعة)</label><input id="setOrg" maxlength="120"></div>
@@ -437,6 +472,36 @@
             <div class="field" style="margin-top:16px"><label for="g_notes">ملاحظات</label><textarea id="g_notes" data-g="notes" rows="2"></textarea></div>
             <div class="alert" id="gradeMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="gradeMsgText"></span></div>
             <div class="dialog-actions"><button type="button" class="btn secondary" id="gradeCancel">إلغاء</button><button type="submit" class="btn">حفظ</button></div>
+        </form>
+    </dialog>
+
+    <!-- نافذة طلب إجازة / مهمة / مغادرة -->
+    <dialog id="requestDialog" aria-labelledby="requestTitle">
+        <form method="dialog" id="requestForm" novalidate>
+            <h3 id="requestTitle">طلب إجازة</h3>
+            <div class="form-grid">
+                <div class="field span2 rq-hr"><label for="r_employeeId">الموظف</label><select id="r_employeeId" data-r="employeeId"></select></div>
+                <div class="field"><label for="r_subType" id="r_subLbl">نوع الإجازة *</label><select id="r_subType" data-r="subType"></select></div>
+                <div class="field"><label for="r_startDate" id="r_startLbl">من تاريخ *</label><input type="date" id="r_startDate" data-r="startDate"></div>
+                <div class="field rq-range"><label for="r_endDate">إلى تاريخ *</label><input type="date" id="r_endDate" data-r="endDate"></div>
+                <div class="field rq-exit"><label for="r_startTime">وقت المغادرة *</label><input type="time" id="r_startTime" data-r="startTime"></div>
+                <div class="field rq-exit"><label for="r_endTime">وقت العودة *</label><input type="time" id="r_endTime" data-r="endTime"></div>
+                <div class="field span2 rq-mission"><label for="r_destination">الوجهة *</label><input id="r_destination" data-r="destination" maxlength="200"></div>
+                <div class="field span2"><label for="r_reason" id="r_reasonLbl">السبب *</label><textarea id="r_reason" data-r="reason" rows="2" maxlength="500"></textarea></div>
+            </div>
+            <div class="hint-line" id="rHint"></div>
+            <div class="alert" id="requestMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="requestMsgText"></span></div>
+            <div class="dialog-actions"><button type="button" class="btn secondary" id="requestCancel">إلغاء</button><button type="submit" class="btn">تقديم الطلب</button></div>
+        </form>
+    </dialog>
+
+    <!-- نافذة رفض طلب -->
+    <dialog id="rejectDialog" aria-labelledby="rejectTitle">
+        <form method="dialog" id="rejectForm" novalidate>
+            <h3 id="rejectTitle">رفض الطلب</h3>
+            <div class="field"><label for="rejectNote">سبب الرفض *</label><textarea id="rejectNote" rows="3" maxlength="300"></textarea></div>
+            <div class="alert" id="rejectMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="rejectMsgText"></span></div>
+            <div class="dialog-actions"><button type="button" class="btn secondary" id="rejectCancel">إلغاء</button><button type="submit" class="btn">رفض الطلب</button></div>
         </form>
     </dialog>
 

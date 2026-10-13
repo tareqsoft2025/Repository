@@ -388,3 +388,6 @@ details[open] > summary .caret { transform: rotate(180deg); }
 .step-chips .chip { direction: ltr; font-variant-numeric: tabular-nums; }
 .steps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; }
 .steps-grid:empty::after { content: 'اضغط «توليد الخطوات» أو أضف الحدين ثم احفظ'; color: var(--text-muted); font-size: var(--text-sm); }
+
+/* نافذة الطلبات: حقول حسب النوع */
+#requestDialog.k-exit .rq-range, #requestDialog.k-exit .rq-mission, #requestDialog.k-leave .rq-exit, #requestDialog.k-leave .rq-mission, #requestDialog.k-mission .rq-exit { display: none; }
