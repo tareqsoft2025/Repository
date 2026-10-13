@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>الحضور والانصراف</title>
+    <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+    <header class="topbar">
+        <h1>نظام الحضور والانصراف</h1>
+        <div class="user"><span id="userName"></span><button class="btn ghost" id="logout">خروج</button></div>
+    </header>
+
+    <main>
+        <section class="card clock">
+            <div class="date" id="today"></div>
+            <div class="time" id="clock"></div>
+            <div class="status" id="status"></div>
+            <div class="actions">
+                <button class="btn in" id="btnIn">تسجيل حضور</button>
+                <button class="btn out" id="btnOut">تسجيل انصراف</button>
+            </div>
+            <div class="error-message" id="msg"></div>
+        </section>
+
+        <section class="stats">
+            <div class="card stat"><b id="sDays">0</b><span>أيام الحضور هذا الشهر</span></div>
+            <div class="card stat"><b id="sLate">0</b><span>مرات التأخير</span></div>
+            <div class="card stat"><b id="sHours">0</b><span>ساعات العمل</span></div>
+        </section>
+
+        <section class="card">
+            <div class="toolbar"><h3>سجلي</h3>
+                <div class="field"><label for="myMonth">الشهر</label><input type="month" id="myMonth"></div>
+            </div>
+            <div class="table-wrap"><table>
+                <thead><tr><th>التاريخ</th><th>الحضور</th><th>الانصراف</th><th>الساعات</th><th>الحالة</th></tr></thead>
+                <tbody id="myBody"></tbody>
+            </table></div>
+        </section>
+
+        <section class="card hidden" id="adminPanel">
+            <div class="toolbar"><h3>سجل جميع الموظفين</h3>
+                <div class="field"><label for="adminDate">اليوم</label><input type="date" id="adminDate"></div>
+                <button class="btn" id="exportCsv">تصدير CSV</button>
+            </div>
+            <div class="table-wrap"><table>
+                <thead><tr><th>الموظف</th><th>الحضور</th><th>الانصراف</th><th>الساعات</th><th>الحالة</th></tr></thead>
+                <tbody id="adminBody"></tbody>
+            </table></div>
+        </section>
+
+        <section class="card hidden" id="addUserPanel">
+            <h3 style="margin-bottom:14px">إضافة مستخدم</h3>
+            <form id="userForm" class="toolbar">
+                <div class="field"><label for="uName">الاسم</label><input id="uName" required></div>
+                <div class="field"><label for="uUser">اسم المستخدم</label><input id="uUser" required></div>
+                <div class="field"><label for="uPass">كلمة المرور</label><input id="uPass" type="password" minlength="6" required></div>
+                <div class="field"><label for="uRole">الدور</label>
+                    <select id="uRole"><option value="employee">موظف</option><option value="admin">مدير</option></select></div>
+                <button class="btn" type="submit">إضافة</button>
+            </form>
+            <div class="error-message" id="userMsg"></div>
+        </section>
+    </main>
+
+    <script src="js/store.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

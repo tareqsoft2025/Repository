@@ -1,244 +1,40 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login Page</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-
-        body {
-            background: linear-gradient(120deg, #3498db, #8e44ad);
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .login-container {
-            background: rgba(255, 255, 255, 0.9);
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 15px 25px rgba(0, 0, 0, 0.2);
-            width: 400px;
-            max-width: 90%;
-        }
-
-        .login-header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-
-        .login-header h2 {
-            color: #333;
-            font-size: 28px;
-        }
-
-        .input-group {
-            position: relative;
-            margin-bottom: 20px;
-        }
-
-        .input-group input {
-            width: 100%;
-            padding: 12px 15px;
-            border: none;
-            border-radius: 5px;
-            background: rgba(255, 255, 255, 0.8);
-            border: 1px solid #ddd;
-            font-size: 16px;
-            outline: none;
-            transition: all 0.3s ease;
-        }
-
-        .input-group input:focus {
-            border-color: #3498db;
-            box-shadow: 0 0 8px rgba(52, 152, 219, 0.5);
-        }
-
-        .input-group label {
-            position: absolute;
-            top: 50%;
-            left: 15px;
-            transform: translateY(-50%);
-            color: #999;
-            pointer-events: none;
-            transition: all 0.3s ease;
-        }
-
-        .input-group input:focus + label,
-        .input-group input:not(:placeholder-shown) + label {
-            top: 0;
-            left: 10px;
-            font-size: 12px;
-            background: white;
-            padding: 0 5px;
-            color: #3498db;
-        }
-
-        .remember-forgot {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-
-        .remember {
-            display: flex;
-            align-items: center;
-        }
-
-        .remember input {
-            margin-right: 5px;
-        }
-
-        .forgot-password {
-            color: #3498db;
-            text-decoration: none;
-        }
-
-        .forgot-password:hover {
-            text-decoration: underline;
-        }
-
-        .login-btn {
-            width: 100%;
-            padding: 12px;
-            background: #3498db;
-            border: none;
-            border-radius: 5px;
-            color: white;
-            font-size: 16px;
-            cursor: pointer;
-            transition: background 0.3s ease;
-        }
-
-        .login-btn:hover {
-            background: #2980b9;
-        }
-
-        .register-link {
-            text-align: center;
-            margin-top: 20px;
-            font-size: 14px;
-        }
-
-        .register-link a {
-            color: #3498db;
-            text-decoration: none;
-        }
-
-        .register-link a:hover {
-            text-decoration: underline;
-        }
-
-        .error-message {
-            color: #e74c3c;
-            font-size: 14px;
-            margin-top: 5px;
-            display: none;
-        }
-
-        @media (max-width: 480px) {
-            .login-container {
-                padding: 20px;
-            }
-            
-            .login-header h2 {
-                font-size: 24px;
-            }
-        }
-    </style>
+    <title>تسجيل الدخول - نظام الحضور والانصراف</title>
+    <link rel="stylesheet" href="css/app.css">
 </head>
-<body>
+<body class="auth-body">
     <div class="login-container">
-        <div class="login-header">
-            <h2>Login to Your Account</h2>
-        </div>
-        
+        <h2>نظام الحضور والانصراف</h2>
         <form id="loginForm">
-            <div class="input-group">
-                <input type="text" id="username" placeholder=" " required>
-                <label for="username">Username or Email</label>
-                <div class="error-message" id="username-error">Please enter a valid username or email</div>
+            <div class="field">
+                <label for="username">اسم المستخدم</label>
+                <input type="text" id="username" autocomplete="username" required>
             </div>
-            
-            <div class="input-group">
-                <input type="password" id="password" placeholder=" " required>
-                <label for="password">Password</label>
-                <div class="error-message" id="password-error">Password must be at least 6 characters</div>
+            <div class="field">
+                <label for="password">كلمة المرور</label>
+                <input type="password" id="password" autocomplete="current-password" required>
             </div>
-            
-            <div class="remember-forgot">
-                <div class="remember">
-                    <input type="checkbox" id="remember">
-                    <label for="remember">Remember me</label>
-                </div>
-                <a href="#" class="forgot-password">Forgot Password?</a>
-            </div>
-            
-            <button type="submit" class="login-btn">Login</button>
+            <div class="error-message" id="error">اسم المستخدم أو كلمة المرور غير صحيحة</div>
+            <button type="submit" class="btn full">دخول</button>
         </form>
-        
-        <div class="register-link">
-            Don't have an account? <a href="#">Register Now</a>
-        </div>
+        <p class="hint">
+            حسابات تجريبية:<br>
+            مدير: <b dir="ltr">admin / admin123</b><br>
+            موظف: <b dir="ltr">ahmed / 123456</b>
+        </p>
     </div>
-
+    <script src="js/store.js"></script>
     <script>
-        document.getElementById('loginForm').addEventListener('submit', function(e) {
+        if (Store.currentUser()) location.replace('index.html');
+        document.getElementById('loginForm').addEventListener('submit', e => {
             e.preventDefault();
-            
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const usernameError = document.getElementById('username-error');
-            const passwordError = document.getElementById('password-error');
-            
-            // Reset errors
-            usernameError.style.display = 'none';
-            passwordError.style.display = 'none';
-            
-            let isValid = true;
-            
-            // Validate username/email
-            if (!username || username.length < 3) {
-                usernameError.style.display = 'block';
-                isValid = false;
-            }
-            
-            // Validate password
-            if (!password || password.length < 6) {
-                passwordError.style.display = 'block';
-                isValid = false;
-            }
-            
-            if (isValid) {
-                // In a real application, you would send the data to a server here
-                alert('Login successful! Redirecting...');
-                
-                // Simulate form submission
-                console.log('Login attempt with:', { username, password });
-            }
-        });
-        
-        // Add floating label functionality
-        const inputs = document.querySelectorAll('.input-group input');
-        inputs.forEach(input => {
-            input.addEventListener('focus', function() {
-                this.previousElementSibling.style.display = 'none';
-            });
-            
-            input.addEventListener('blur', function() {
-                if (!this.value) {
-                    this.previousElementSibling.style.display = 'block';
-                }
-            });
+            const u = Store.login(document.getElementById('username').value, document.getElementById('password').value);
+            if (u) location.replace('index.html');
+            else document.getElementById('error').style.display = 'block';
         });
     </script>
 </body>
