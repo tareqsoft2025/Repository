@@ -299,38 +299,56 @@
     </div>
 
     <!-- نافذة ملف الموظف -->
-    <dialog id="empDialog" class="wide" aria-labelledby="empTitle">
+    <dialog id="empDialog" class="wide xl" aria-labelledby="empTitle">
         <form method="dialog" id="empForm" novalidate>
             <h3 id="empTitle">إضافة موظف</h3>
 
             <h4 class="sec-title">البيانات الشخصية</h4>
             <div class="form-grid">
-                <div class="field span2"><label for="e_name">الاسم الكامل *</label><input id="e_name" data-f="name" required></div>
-                <div class="field"><label for="e_nationalId">رقم الهوية</label><input id="e_nationalId" data-f="nationalId" dir="ltr" inputmode="numeric"></div>
-                <div class="field"><label for="e_gender">الجنس</label><select id="e_gender" data-f="gender"><option value="">—</option><option>ذكر</option><option>أنثى</option></select></div>
-                <div class="field"><label for="e_birthDate">تاريخ الميلاد</label><input type="date" id="e_birthDate" data-f="birthDate"></div>
+                <div class="field"><label for="e_name">الاسم *</label><input id="e_name" data-f="name" autocomplete="off"></div>
+                <div class="field"><label for="e_nameEn">الاسم باللغة الإنجليزية *</label><input id="e_nameEn" data-f="nameEn" dir="ltr" autocomplete="off" placeholder="Full name"></div>
+                <div class="field"><label for="e_birthDate">تاريخ الميلاد *</label><input type="date" id="e_birthDate" data-f="birthDate"></div>
+                <div class="field"><label for="e_nationalId">رقم الهوية *</label><input id="e_nationalId" data-f="nationalId" dir="ltr" inputmode="numeric" autocomplete="off"></div>
+                <div class="field"><label for="e_gender">الجنس *</label><select id="e_gender" data-f="gender"><option value="">-- اختر --</option><option>ذكر</option><option>أنثى</option></select></div>
+                <div class="field"><label for="e_birthPlace">مكان الميلاد</label><input id="e_birthPlace" data-f="birthPlace"></div>
                 <div class="field"><label for="e_nationality">الجنسية</label><input id="e_nationality" data-f="nationality"></div>
                 <div class="field"><label for="e_marital">الحالة الاجتماعية</label><select id="e_marital" data-f="marital"><option value="">—</option><option>أعزب</option><option>متزوج</option><option>مطلق</option><option>أرمل</option></select></div>
+                <div class="field span2"><label for="e_address">العنوان</label><input id="e_address" data-f="address"></div>
+                <div class="field span2"><label for="e_idFile">صورة الهوية الشخصية (PDF أو صورة، حتى 2 ميغابايت)</label>
+                    <input type="file" id="e_idFile" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
+                    <div class="file-cur hidden" id="e_idCur"></div></div>
             </div>
 
             <h4 class="sec-title">بيانات الاتصال</h4>
             <div class="form-grid">
                 <div class="field"><label for="e_phone">الهاتف</label><input id="e_phone" data-f="phone" dir="ltr" inputmode="tel"></div>
                 <div class="field"><label for="e_email">البريد الإلكتروني</label><input type="email" id="e_email" data-f="email" dir="ltr"></div>
-                <div class="field span2"><label for="e_address">العنوان</label><input id="e_address" data-f="address"></div>
             </div>
 
-            <h4 class="sec-title">البيانات الوظيفية</h4>
+            <div class="sec-row"><h4 class="sec-title">المؤهلات العلمية</h4><button type="button" class="btn secondary sm" id="addQual"><svg class="i"><use href="#i-plus"/></svg>إضافة مؤهل</button></div>
+            <div class="rep-list" id="qualList"></div>
+
+            <div class="sec-row"><h4 class="sec-title">الدورات التدريبية</h4><button type="button" class="btn secondary sm" id="addCourse"><svg class="i"><use href="#i-plus"/></svg>إضافة دورة</button></div>
+            <div class="rep-list" id="courseList"></div>
+
+            <div class="sec-row"><h4 class="sec-title">الخبرات العملية</h4><button type="button" class="btn secondary sm" id="addExp"><svg class="i"><use href="#i-plus"/></svg>إضافة خبرة</button></div>
+            <div class="rep-list" id="expList"></div>
+
+            <h4 class="sec-title">بيانات التوظيف</h4>
             <div class="form-grid">
                 <div class="field"><label for="e_empNo">رقم الموظف (تلقائي)</label><input id="e_empNo" dir="ltr" disabled></div>
-                <div class="field"><label for="e_departmentId">القسم</label><select id="e_departmentId" data-f="departmentId"></select></div>
-                <div class="field"><label for="e_jobTitleId">المسمى الوظيفي</label><select id="e_jobTitleId" data-f="jobTitleId"></select></div>
+                <div class="field"><label for="e_departmentId">القسم *</label><select id="e_departmentId" data-f="departmentId"></select></div>
+                <div class="field"><label for="e_jobTitleId">المسمى الوظيفي *</label><select id="e_jobTitleId" data-f="jobTitleId"></select></div>
+                <div class="field span2"><label for="e_managerSearch">المدير المباشر</label>
+                    <input id="e_managerSearch" list="mgrList" placeholder="ابحث عن المدير..." autocomplete="off">
+                    <input type="hidden" id="e_managerId" data-f="managerId"><datalist id="mgrList"></datalist></div>
+                <div class="field"><label for="e_hireDate">تاريخ التعيين *</label><input type="date" id="e_hireDate" data-f="hireDate"></div>
                 <div class="field"><label for="e_empType">نوع التوظيف</label><select id="e_empType" data-f="empType"><option value="">—</option><option>دوام كامل</option><option>دوام جزئي</option><option>عقد</option><option>متدرب</option></select></div>
-                <div class="field"><label for="e_hireDate">تاريخ التعيين</label><input type="date" id="e_hireDate" data-f="hireDate"></div>
                 <div class="field"><label for="e_salary">الراتب الأساسي</label><input type="number" id="e_salary" data-f="salary" min="0" step="0.01" dir="ltr"></div>
                 <div class="field"><label for="e_status">الحالة *</label><select id="e_status" data-f="status"><option value="active">على رأس العمل</option><option value="leave">في إجازة</option><option value="terminated">منتهي الخدمة</option></select></div>
             </div>
             <div class="hint-line" id="e_gradeHint"></div>
+            <div class="hint-line" id="empSubs"></div>
 
             <h4 class="sec-title">حساب الدخول والحضور</h4>
             <div class="form-grid">
@@ -340,12 +358,6 @@
             <div class="hint-line" id="e_accHint">اسم المستخدم وكلمة المرور المؤقتة = رقم الهوية، ويُطلب من الموظف تغييرها عند أول دخول.</div>
             <div class="att-summary hidden" id="empAtt" aria-live="polite"></div>
 
-            <h4 class="sec-title">التسلسل الإداري</h4>
-            <div class="form-grid">
-                <div class="field span2"><label for="e_managerId">الرئيس المباشر</label><select id="e_managerId" data-f="managerId"></select></div>
-            </div>
-            <div class="hint-line" id="empSubs"></div>
-
             <h4 class="sec-title">جهة اتصال للطوارئ</h4>
             <div class="form-grid">
                 <div class="field"><label for="e_emergencyName">الاسم</label><input id="e_emergencyName" data-f="emergencyName"></div>
@@ -354,9 +366,9 @@
             <div class="field" style="margin-top:16px"><label for="e_notes">ملاحظات</label><textarea id="e_notes" data-f="notes" rows="3"></textarea></div>
 
             <div class="alert" id="empMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="empMsgText"></span></div>
-            <div class="dialog-actions">
+            <div class="dialog-actions sticky">
                 <button type="button" class="btn secondary" id="empCancel">إلغاء</button>
-                <button type="submit" class="btn">حفظ</button>
+                <button type="submit" class="btn" id="empSave">حفظ</button>
             </div>
         </form>
     </dialog>

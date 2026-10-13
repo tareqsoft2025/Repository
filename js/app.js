@@ -211,14 +211,16 @@ function openEmpDialog(emp) {
     .map(u => new Option(`${u.name} (${u.username})`, u.id)));
   // الأدلة: الأقسام والمسميات والرؤساء المحتملون
   const depts = Store.departments(), titles = Store.jobTitles();
-  $('e_departmentId').replaceChildren(new Option('بدون قسم', ''), ...depts.map(d => new Option(d.name, d.id)));
-  $('e_jobTitleId').replaceChildren(new Option('بدون مسمى', ''), ...titles.filter(t => t.active || t.id === emp?.jobTitleId).map(t => new Option(t.name, t.id)));
+  $('e_departmentId').replaceChildren(new Option('-- اختر --', ''), ...depts.map(d => new Option(d.name, d.id)));
+  $('e_jobTitleId').replaceChildren(new Option('-- اختر --', ''), ...titles.filter(t => t.active || t.id === emp?.jobTitleId).map(t => new Option(t.name, t.id)));
   const blocked = new Set(emp ? [emp.id, ...descendantIds(emp.id)] : []); // لا يكون الموظف أو أحد مرؤوسيه رئيساً له
-  $('e_managerId').replaceChildren(new Option('بدون رئيس مباشر', ''), ...empCache
-    .filter(x => !blocked.has(x.id) && (x.status !== 'terminated' || x.id === emp?.managerId))
-    .map(x => new Option(`${x.name}${x.jobTitle ? ' — ' + x.jobTitle : ''}`, x.id)));
+  const candidates = empCache.filter(x => !blocked.has(x.id) && (x.status !== 'terminated' || x.id === emp?.managerId));
+  mgrMap = Object.fromEntries(candidates.map(x => [mgrLabel(x), x.id]));
+  $('mgrList').replaceChildren(...candidates.map(x => { const o = document.createElement('option'); o.value = mgrLabel(x); o.label = x.jobTitle || ''; return o; }));
   document.querySelectorAll('#empForm [data-f]').forEach(el => { el.value = emp ? (emp[el.dataset.f] ?? '') : (el.dataset.f === 'status' ? 'active' : ''); });
   $('e_empNo').value = emp ? emp.empNo : Store.nextEmpNo();
+  setManager(emp?.managerId);
+  fillExtras(emp);
   const canCreate = !emp?.userId; // لا يُنشأ حساب إن كان الموظف مرتبطاً بحساب
   $('e_createWrap').classList.toggle('hidden', !canCreate);
   $('e_accHint').classList.toggle('hidden', !canCreate);
@@ -243,6 +245,90 @@ function updateEmpAtt() {
   const note = document.createElement('div'); note.className = 'att-note';
   note.textContent = `ملخص الشهر الحالي (${thisMonth()}) من سجل حضور الحساب المرتبط`; box.appendChild(note);
 }
+// ---------- المدير المباشر: بحث بالاسم ----------
+let mgrMap = {};
+const mgrLabel = x => `${x.name} — ${x.empNo}`;
+function setManager(id) {
+  const e = empCache.find(x => x.id === id);
+  $('e_managerId').value = e ? id : ''; $('e_managerSearch').value = e ? mgrLabel(e) : '';
+}
+function syncManager() { const v = $('e_managerSearch').value.trim(); $('e_managerId').value = v ? (mgrMap[v] || '') : ''; }
+
+// ---------- أقسام قابلة للتكرار: مؤهلات / دورات / خبرات + المرفقات ----------
+let repSeq = 0;
+const DEGREES = ['ثانوية عامة', 'دبلوم', 'بكالوريوس', 'ماجستير', 'دكتوراه'];
+function downloadDoc(id) {
+  try { const d = Store.getDocument(id), a = document.createElement('a'); a.href = URL.createObjectURL(d.blob); a.download = d.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
+  catch (e) { showAlert('empMsg', e.message); }
+}
+// عرض المرفق الحالي مع رابط تحميله وخيار حذفه
+function currentFile(doc, removeKey) {
+  const box = document.createElement('div'); box.className = 'file-cur';
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'link'; b.textContent = `تحميل: ${doc.name} (${Math.max(1, Math.round(doc.size / 1024))} ك.ب)`; b.onclick = () => downloadDoc(doc.id);
+  const l = document.createElement('label'), c = document.createElement('input'); c.type = 'checkbox'; c.dataset.k = removeKey; l.append(c, ' حذف المرفق');
+  box.append(b, l); return box;
+}
+function repRow(listId, label, fields, data = {}, doc) {
+  const list = $(listId), row = document.createElement('div'); row.className = 'rep'; row.dataset.id = data.id || '';
+  const head = document.createElement('div'), t = document.createElement('span'), rm = document.createElement('button');
+  head.className = 'rep-head'; rm.type = 'button'; rm.className = 'icon-btn danger'; rm.title = 'حذف هذا الصف'; rm.setAttribute('aria-label', 'حذف هذا الصف'); rm.innerHTML = icon('trash');
+  rm.onclick = () => { row.remove(); renumber(list, label); }; head.append(t, rm);
+  const grid = document.createElement('div'); grid.className = 'form-grid';
+  fields.forEach(f => {
+    const fw = document.createElement('div'), lb = document.createElement('label'); fw.className = 'field' + (f.span ? ' span2' : ''); lb.textContent = f.label;
+    let ctl;
+    if (f.options) { ctl = document.createElement('select'); ctl.add(new Option('-- اختر --', '')); f.options.forEach(o => ctl.add(new Option(o))); }
+    else { ctl = document.createElement('input'); ctl.type = f.type || 'text'; if (f.min != null) ctl.min = f.min; if (f.max != null) ctl.max = f.max; if (f.step) ctl.step = f.step; }
+    ctl.dataset.k = f.k; ctl.value = data[f.k] ?? ''; ctl.id = `${listId}-${++repSeq}-${f.k}`; lb.htmlFor = ctl.id;
+    fw.append(lb, ctl); grid.appendChild(fw);
+  });
+  if (fields.withFile) {
+    const fw = document.createElement('div'), lb = document.createElement('label'), fi = document.createElement('input');
+    fw.className = 'field span2'; lb.textContent = 'رابط تحميل المؤهل: ارفع الملف (PDF أو صورة، حتى 2 ميغابايت)';
+    fi.type = 'file'; fi.dataset.k = 'file'; fi.accept = '.pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp'; fi.id = `${listId}-${++repSeq}-file`; lb.htmlFor = fi.id;
+    fw.append(lb, fi); if (doc) fw.appendChild(currentFile(doc, 'removeDoc')); grid.appendChild(fw);
+  }
+  row.append(head, grid); list.appendChild(row); renumber(list, label); return row;
+}
+function renumber(list, label) { [...list.children].forEach((r, i) => { r.querySelector('.rep-head span').textContent = `${label} ${i + 1}`; }); }
+const QUAL = Object.assign([
+  { k: 'degree', label: 'المؤهل العلمي *', options: DEGREES }, { k: 'major', label: 'التخصص *' }, { k: 'university', label: 'الجامعة *' },
+  { k: 'gradYear', label: 'سنة التخرج *', type: 'number', min: 1950, max: new Date().getFullYear() + 1 }, { k: 'gpa', label: 'المعدل *', type: 'number', min: 0, max: 100, step: '0.01' }], { withFile: true });
+const COURSE = [{ k: 'name', label: 'اسم الدورة *' }, { k: 'hours', label: 'عدد الساعات *', type: 'number', min: 1, step: '0.5' }, { k: 'from', label: 'من *', type: 'date' }, { k: 'to', label: 'إلى *', type: 'date' }, { k: 'organizer', label: 'الجهة المنظمة *' }];
+const EXPER = [{ k: 'employer', label: 'اسم الجهة *' }, { k: 'jobTitle', label: 'المسمى الوظيفي *' }, { k: 'from', label: 'من *', type: 'date' }, { k: 'to', label: 'إلى (فارغ = حتى الآن)', type: 'date' }];
+const addQualRow = (q, doc) => repRow('qualList', 'المؤهل', QUAL, q, doc);
+const addCourseRow = c => repRow('courseList', 'الدورة', COURSE, c);
+const addExpRow = x => repRow('expList', 'الخبرة', EXPER, x);
+
+// تعبئة الأقسام الفرعية والمرفقات من ملف الموظف عند التعديل
+function fillExtras(emp) {
+  ['qualList', 'courseList', 'expList'].forEach(id => { $(id).replaceChildren(); });
+  $('qualList').dataset.empty = 'لا توجد مؤهلات مضافة'; $('courseList').dataset.empty = 'لا توجد دورات مضافة'; $('expList').dataset.empty = 'لا توجد خبرات مضافة';
+  $('e_idFile').value = ''; $('e_idCur').replaceChildren(); $('e_idCur').classList.add('hidden');
+  if (!emp) return;
+  const d = Store.employeeDetails(emp.id), docOf = id => d.docs.find(x => x.kind === 'qualification' && x.refId === id);
+  d.qualifications.forEach(q => addQualRow(q, docOf(q.id)));
+  d.courses.forEach(addCourseRow); d.experiences.forEach(addExpRow);
+  const idDoc = d.docs.find(x => x.kind === 'id');
+  if (idDoc) { $('e_idCur').appendChild(currentFile(idDoc, 'idRemove')); $('e_idCur').classList.remove('hidden'); }
+}
+async function readFile(inp) {
+  const f = inp?.files?.[0]; if (!f) return null;
+  const ext = f.name.split('.').pop().toLowerCase(), guess = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }[ext] || '';
+  return { name: f.name, mime: f.type || guess, data: new Uint8Array(await f.arrayBuffer()) };
+}
+async function collectRows(listId, keys) {
+  const out = [];
+  for (const row of $(listId).children) {
+    const o = { id: row.dataset.id || undefined };
+    keys.forEach(k => { o[k] = row.querySelector(`[data-k="${k}"]`).value; });
+    const fi = row.querySelector('[data-k="file"]');
+    if (fi) { o.file = await readFile(fi); o.removeDoc = !!row.querySelector('[data-k="removeDoc"]')?.checked; }
+    out.push(o);
+  }
+  return out;
+}
+
 // كل مرؤوسي الموظف مباشرة وغير مباشرة
 function descendantIds(id, seen = new Set()) {
   empCache.filter(x => x.managerId === id && !seen.has(x.id)).forEach(x => { seen.add(x.id); descendantIds(x.id, seen); });
@@ -263,10 +349,14 @@ function syncCreateAccount() {
   if (on) $('e_userId').value = '';
   $('e_userId').disabled = on;
 }
-function employeeFromForm() {
+async function employeeFromForm() {
   const e = { id: $('empForm').dataset.id || undefined };
   document.querySelectorAll('#empForm [data-f]').forEach(el => { e[el.dataset.f] = el.value; });
   e.createAccount = $('e_createAccount').checked && !$('e_createWrap').classList.contains('hidden');
+  e.qualifications = await collectRows('qualList', ['degree', 'major', 'university', 'gradYear', 'gpa']);
+  e.courses = await collectRows('courseList', ['name', 'hours', 'from', 'to', 'organizer']);
+  e.experiences = await collectRows('expList', ['employer', 'jobTitle', 'from', 'to']);
+  e.idDoc = { file: await readFile($('e_idFile')), remove: !!$('e_idCur').querySelector('[data-k="idRemove"]')?.checked };
   return e;
 }
 
@@ -721,23 +811,31 @@ function init() {
     $('empForm').onsubmit = async e => {
       e.preventDefault(); hideAlert('empMsg');
       try {
-        const res = await Store.saveEmployee(employeeFromForm()); $('empDialog').close(); refresh();
+        syncManager();
+        if ($('e_managerSearch').value.trim() && !$('e_managerId').value) throw new Error('اختر المدير المباشر من القائمة المقترحة');
+        $('empSave').disabled = true;
+        const res = await Store.saveEmployee(await employeeFromForm()); $('empDialog').close(); refresh();
         if (res.accountCreated && $('hrOk')) { $('hrOkText').textContent = `تم إنشاء حساب الدخول — اسم المستخدم: ${res.accountCreated} وكلمة المرور المؤقتة: رقم الهوية نفسه. سيُطلب من الموظف تغييرها عند أول دخول.`; $('hrOk').classList.add('show'); }
       }
       catch (err) { showAlert('empMsg', err.message); $('empDialog').scrollTo({ top: $('empDialog').scrollHeight }); }
+      finally { $('empSave').disabled = false; }
     };
     ['hSearch', 'hStatus', 'hDept'].forEach(id => $(id).addEventListener('input', renderHr));
     $('exportEmp').onclick = () => downloadCsv(`employees-${Store.dateKey(new Date())}.csv`,
-      [['رقم الموظف', 'الاسم', 'الهوية', 'الجنس', 'تاريخ الميلاد', 'الجنسية', 'الحالة الاجتماعية', 'الهاتف', 'البريد', 'العنوان', 'القسم', 'المسمى الوظيفي', 'نوع التوظيف', 'تاريخ التعيين', 'الحالة']]
-        .concat(filteredEmployees().map(x => [x.empNo, x.name, x.nationalId, x.gender, x.birthDate, x.nationality, x.marital, x.phone, x.email, x.address, x.department, x.jobTitle, x.empType, x.hireDate, EMP_STATUS[x.status][0]])));
+      [['رقم الموظف', 'الاسم', 'الاسم بالإنجليزية', 'الهوية', 'الجنس', 'تاريخ الميلاد', 'مكان الميلاد', 'الجنسية', 'الحالة الاجتماعية', 'الهاتف', 'البريد', 'العنوان', 'القسم', 'المسمى الوظيفي', 'نوع التوظيف', 'تاريخ التعيين', 'الحالة']]
+        .concat(filteredEmployees().map(x => [x.empNo, x.name, x.nameEn, x.nationalId, x.gender, x.birthDate, x.birthPlace, x.nationality, x.marital, x.phone, x.email, x.address, x.department, x.jobTitle, x.empType, x.hireDate, EMP_STATUS[x.status][0]])));
 
     $('e_userId').onchange = updateEmpAtt;
+    $('e_managerSearch').addEventListener('input', syncManager);
+    $('addQual').onclick = () => addQualRow();
+    $('addCourse').onclick = () => addCourseRow();
+    $('addExp').onclick = () => addExpRow();
     $('e_createAccount').onchange = () => { syncCreateAccount(); updateEmpAtt(); };
     $('e_jobTitleId').onchange = updateGradeHint;
     $('e_salary').addEventListener('input', updateGradeHint);
     $('e_departmentId').onchange = () => { // اقتراح مدير القسم رئيساً إن لم يُحدَّد رئيس
       const d = Store.departments().find(x => x.id === $('e_departmentId').value), id = $('empForm').dataset.id;
-      if (d?.managerId && d.managerId !== id && !$('e_managerId').value && [...$('e_managerId').options].some(o => o.value === d.managerId)) $('e_managerId').value = d.managerId;
+      if (d?.managerId && d.managerId !== id && !$('e_managerId').value && Object.values(mgrMap).includes(d.managerId)) setManager(d.managerId);
     };
 
     // المسميات والدرجات والهيكل
