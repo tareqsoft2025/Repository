@@ -168,6 +168,7 @@ const Store = (() => {
     addCol('users', 'can_edit', 'INTEGER NOT NULL DEFAULT 0');
     addCol('records', 'edited_by', 'TEXT');
     addCol('records', 'edited_at', 'TEXT');
+    for (const c of ['in_lat', 'in_lng', 'in_acc', 'out_lat', 'out_lng', 'out_acc']) addCol('records', c, 'REAL');
     addCol('users', 'can_hr', 'INTEGER NOT NULL DEFAULT 0');
     addCol('users', 'must_change', 'INTEGER NOT NULL DEFAULT 0');
     addCol('employees', 'user_id', 'TEXT');
@@ -225,7 +226,7 @@ const Store = (() => {
     await persist(); // يحفظ أيضاً أي ترقية للمخطط
   })();
 
-  const REC = 'SELECT id, user_id AS userId, date, check_in AS checkIn, check_out AS checkOut, edited_by AS editedBy, edited_at AS editedAt FROM records';
+  const REC = 'SELECT id, user_id AS userId, date, check_in AS checkIn, check_out AS checkOut, edited_by AS editedBy, edited_at AS editedAt, in_lat AS inLat, in_lng AS inLng, in_acc AS inAcc, out_lat AS outLat, out_lng AS outLng, out_acc AS outAcc FROM records';
   const USER = 'SELECT id, username, name, role, active, can_edit AS canEdit, can_hr AS canHr, must_change AS mustChange FROM users';
   const activeAdmins = () => all("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1")[0].n;
   const need = (cond, msg) => { if (!cond) throw new Error(msg); };
@@ -930,21 +931,29 @@ const Store = (() => {
 
     // ---------- الحضور ----------
     todayRecord: userId => all(`${REC} WHERE user_id = ? AND date = ?`, [userId, dateKey(new Date())])[0] || null,
-    checkIn(userId) {
+    // موقع التسجيل (اختياري): { lat, lng, acc } بإحداثيات صحيحة وإلا يُرفض
+    cleanLoc(loc) {
+      if (loc == null) return [null, null, null];
+      const lat = Number(loc.lat), lng = Number(loc.lng), acc = loc.acc == null || loc.acc === '' ? null : Number(loc.acc);
+      need(Number.isFinite(lat) && lat >= -90 && lat <= 90 && Number.isFinite(lng) && lng >= -180 && lng <= 180, 'إحداثيات الموقع غير صحيحة');
+      need(acc === null || (Number.isFinite(acc) && acc >= 0), 'دقة الموقع غير صحيحة');
+      return [Math.round(lat * 1e6) / 1e6, Math.round(lng * 1e6) / 1e6, acc === null ? null : Math.round(acc)];
+    },
+    checkIn(userId, loc) {
       need(!this.currentUser()?.mustChange, MUST_CHANGE);
       need(!this.todayRecord(userId), 'تم تسجيل الحضور اليوم مسبقاً');
       const el = this.attendanceEligibility(userId);
       need(el.ok, `لا يمكن تسجيل الحضور: ${this.eligibilityReason(el, this.currentUser()?.id === userId)}. تواصل مع الموارد البشرية`);
-      const now = new Date();
-      run('INSERT INTO records (id, user_id, date, check_in) VALUES (?,?,?,?)', [uid(), userId, dateKey(now), now.toISOString()]);
+      const now = new Date(), l = this.cleanLoc(loc);
+      run('INSERT INTO records (id, user_id, date, check_in, in_lat, in_lng, in_acc) VALUES (?,?,?,?,?,?,?)', [uid(), userId, dateKey(now), now.toISOString(), ...l]);
       return persist();
     },
-    checkOut(userId) {
+    checkOut(userId, loc) {
       need(!this.currentUser()?.mustChange, MUST_CHANGE);
       const r = this.todayRecord(userId);
       need(r, 'لم يتم تسجيل الحضور اليوم');
       need(!r.checkOut, 'تم تسجيل الانصراف مسبقاً');
-      run('UPDATE records SET check_out = ? WHERE id = ?', [new Date().toISOString(), r.id]);
+      run('UPDATE records SET check_out = ?, out_lat = ?, out_lng = ?, out_acc = ? WHERE id = ?', [new Date().toISOString(), ...this.cleanLoc(loc), r.id]);
       return persist();
     },
     recordsFor: (userId, month) => all(`${REC} WHERE user_id = ? AND date LIKE ? ORDER BY date DESC`, [userId, (month || '') + '%']),
@@ -1154,7 +1163,8 @@ const Store = (() => {
           if (this.isWeekend(date) || date < hire(k) || rnd() < 0.08) continue;
           const inMin = 470 + Math.floor(rnd() * 80), outMin = 960 + Math.floor(rnd() * 105); // 07:50–09:10 / 16:00–17:45
           const hm = m => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
-          run('INSERT INTO records (id, user_id, date, check_in, check_out) VALUES (?,?,?,?,?)', [D + 'r' + ++n, uid2, date, localISO(date, hm(inMin)), localISO(date, hm(outMin))]);
+          const pt = () => [Math.round((31.5017 + (rnd() - 0.5) * 0.006) * 1e6) / 1e6, Math.round((34.4668 + (rnd() - 0.5) * 0.006) * 1e6) / 1e6, 8 + Math.floor(rnd() * 35)]; // حول مقر العمل
+          run('INSERT INTO records (id, user_id, date, check_in, check_out, in_lat, in_lng, in_acc, out_lat, out_lng, out_acc) VALUES (?,?,?,?,?,?,?,?,?,?,?)', [D + 'r' + ++n, uid2, date, localISO(date, hm(inMin)), localISO(date, hm(outMin)), ...pt(), ...pt()]);
           recs++;
         }
       }
