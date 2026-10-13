@@ -10,26 +10,56 @@
     <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-    <header class="topbar">
-        <div class="topbar-in">
-            <div class="brand"><div class="mark"><svg class="i"><use href="#i-briefcase"/></svg></div><span>شؤون الموظفين</span></div>
-            <div class="user">
-                <div class="avatar" id="avatar" aria-hidden="true"></div>
-                <div class="user-meta"><b id="userName"></b><span id="userRole"></span></div>
-                <button class="icon-btn" id="btnPw" title="تغيير كلمة المرور" aria-label="تغيير كلمة المرور"><svg class="i"><use href="#i-key"/></svg></button>
-                <button class="btn secondary sm" id="logout"><svg class="i"><use href="#i-log-out"/></svg>خروج</button>
+    <div class="app" id="app">
+        <aside class="sidebar" id="sidebar" aria-label="القائمة الرئيسية">
+            <div class="sb-head">
+                <div class="sb-mark"><svg class="i"><use href="#i-briefcase"/></svg></div>
+                <div class="sb-title">شؤون الموظفين<small>الموارد البشرية والحضور</small></div>
+                <button class="icon-btn sb-collapse" id="sbCollapse" title="طيّ القائمة" aria-label="طيّ القائمة" aria-expanded="true"><svg class="i"><use href="#i-chevrons-right"/></svg></button>
+                <button class="icon-btn sb-close" id="sbClose" aria-label="إغلاق القائمة"><svg class="i"><use href="#i-x"/></svg></button>
             </div>
-        </div>
-        <nav class="tabs" role="tablist" aria-label="الأقسام">
-            <button class="tab" role="tab" data-tab="me"><svg class="i"><use href="#i-clock"/></svg>لوحتي</button>
-            <button class="tab hr-only hidden" role="tab" data-tab="hr"><svg class="i"><use href="#i-briefcase"/></svg>شؤون الموظفين</button>
-            <button class="tab hr-only hidden" role="tab" data-tab="contracts"><svg class="i"><use href="#i-file-text"/></svg>العقود</button>
-            <button class="tab edit-only hidden" role="tab" data-tab="daily"><svg class="i"><use href="#i-calendar-check"/></svg>الحضور اليومي</button>
-            <button class="tab admin-only hidden" role="tab" data-tab="report"><svg class="i"><use href="#i-file-text"/></svg>التقارير</button>
-            <button class="tab admin-only hidden" role="tab" data-tab="users"><svg class="i"><use href="#i-users"/></svg>الحسابات</button>
-            <button class="tab admin-only hidden" role="tab" data-tab="settings"><svg class="i"><use href="#i-settings"/></svg>الإعدادات</button>
-        </nav>
-    </header>
+            <nav class="sb-nav" id="sbNav">
+                <div class="nav-group" data-group>
+                    <button class="nav-item" data-tab="me" data-label="لوحتي"><svg class="i"><use href="#i-home"/></svg><span class="nav-text">لوحتي</span></button>
+                </div>
+                <div class="nav-group" data-group>
+                    <div class="nav-label">شؤون الموظفين</div>
+                <button class="nav-item hr-only hidden" data-tab="hr" data-label="ملفات الموظفين"><svg class="i"><use href="#i-users"/></svg><span class="nav-text">ملفات الموظفين</span></button>
+                <button class="nav-item hr-only hidden" data-tab="contracts" data-label="العقود"><svg class="i"><use href="#i-file-text"/></svg><span class="nav-text">العقود</span></button>
+                <button class="nav-item hr-only hidden" data-tab="titles" data-label="المسميات الوظيفية"><svg class="i"><use href="#i-id-card"/></svg><span class="nav-text">المسميات الوظيفية</span></button>
+                <button class="nav-item hr-only hidden" data-tab="grades" data-label="سلم الرواتب"><svg class="i"><use href="#i-trend"/></svg><span class="nav-text">سلم الرواتب</span></button>
+                <button class="nav-item hr-only hidden" data-tab="org" data-label="الهيكل التنظيمي"><svg class="i"><use href="#i-network"/></svg><span class="nav-text">الهيكل التنظيمي</span></button>
+                </div>
+                <div class="nav-group" data-group>
+                    <div class="nav-label">الحضور والانصراف</div>
+                <button class="nav-item edit-only hidden" data-tab="daily" data-label="الحضور اليومي"><svg class="i"><use href="#i-calendar-check"/></svg><span class="nav-text">الحضور اليومي</span></button>
+                <button class="nav-item admin-only hidden" data-tab="report" data-label="التقارير الشهرية"><svg class="i"><use href="#i-chart"/></svg><span class="nav-text">التقارير الشهرية</span></button>
+                </div>
+                <div class="nav-group" data-group>
+                    <div class="nav-label">النظام</div>
+                <button class="nav-item admin-only hidden" data-tab="users" data-label="حسابات المستخدمين"><svg class="i"><use href="#i-key"/></svg><span class="nav-text">حسابات المستخدمين</span></button>
+                <button class="nav-item admin-only hidden" data-tab="settings" data-label="الإعدادات"><svg class="i"><use href="#i-settings"/></svg><span class="nav-text">الإعدادات</span></button>
+                </div>
+            </nav>
+            <div class="sb-user">
+                <div class="sb-user-row">
+                    <div class="avatar" id="avatar" aria-hidden="true"></div>
+                    <div class="user-meta"><b id="userName"></b><span id="userRole"></span></div>
+                </div>
+                <div class="sb-actions">
+                    <button class="sb-btn" id="btnPw" title="تغيير كلمة المرور"><svg class="i"><use href="#i-key"/></svg><span>كلمة المرور</span></button>
+                    <button class="sb-btn" id="logout" title="تسجيل الخروج"><svg class="i"><use href="#i-log-out"/></svg><span>خروج</span></button>
+                </div>
+            </div>
+        </aside>
+        <div class="sb-overlay" id="sbOverlay"></div>
+
+        <div class="content">
+            <header class="pagebar">
+                <button class="icon-btn menu-btn" id="menuBtn" aria-label="فتح القائمة" aria-controls="sidebar" aria-expanded="false"><svg class="i"><use href="#i-menu"/></svg></button>
+                <div><div class="crumb" id="pageCrumb"></div><h1 id="pageTitle"></h1></div>
+                <div class="date" id="pageDate"></div>
+            </header>
 
     <main>
         <!-- لوحتي -->
@@ -121,6 +151,58 @@
             </section>
         </div>
 
+        <!-- المسميات الوظيفية (موارد بشرية) -->
+        <div class="panel hidden" data-panel="titles">
+            <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-id-card"/></svg>المسميات الوظيفية</h3>
+                    <button class="btn" id="addTitle"><svg class="i"><use href="#i-plus"/></svg>إضافة مسمى</button>
+                </div>
+                <div class="filters two">
+                    <div class="field"><label for="tSearch">بحث</label><input type="search" id="tSearch" placeholder="اسم المسمى أو رمزه"></div>
+                    <div class="field"><label for="tGrade">الدرجة</label><select id="tGrade"></select></div>
+                </div>
+                <div class="table-wrap"><table>
+                    <thead><tr><th>الرمز</th><th>المسمى الوظيفي</th><th>الدرجة</th><th>نطاق الراتب</th><th>الموظفون</th><th>الحالة</th><th class="no-print"></th></tr></thead>
+                    <tbody id="titlesBody"></tbody>
+                </table></div>
+                <div class="alert" id="titlesMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="titlesMsgText"></span></div>
+            </section>
+        </div>
+
+        <!-- سلم الرواتب (موارد بشرية) -->
+        <div class="panel hidden" data-panel="grades">
+            <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-trend"/></svg>سلم الرواتب</h3>
+                    <button class="btn" id="addGrade"><svg class="i"><use href="#i-plus"/></svg>إضافة درجة</button>
+                </div>
+                <div class="ladder" id="ladder"></div>
+            </section>
+            <section class="card">
+                <div class="card-head"><h3>تفاصيل الدرجات</h3></div>
+                <div class="table-wrap"><table>
+                    <thead><tr><th>الرمز</th><th>الدرجة</th><th>الحد الأدنى</th><th>الحد الأعلى</th><th>العلاوة السنوية</th><th>عدد العلاوات</th><th>المسميات</th><th class="no-print"></th></tr></thead>
+                    <tbody id="gradesBody"></tbody>
+                </table></div>
+                <div class="alert" id="gradesMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="gradesMsgText"></span></div>
+            </section>
+        </div>
+
+        <!-- الهيكل التنظيمي (موارد بشرية) -->
+        <div class="panel hidden" data-panel="org">
+            <section class="card">
+                <div class="card-head"><h3><svg class="i"><use href="#i-network"/></svg>الهيكل التنظيمي</h3>
+                    <div class="seg" role="group" aria-label="طريقة العرض">
+                        <button type="button" id="orgDept" aria-pressed="true">الأقسام</button>
+                        <button type="button" id="orgLine" aria-pressed="false">التسلسل الإداري</button>
+                    </div>
+                    <button class="btn" id="addDept"><svg class="i"><use href="#i-plus"/></svg>إضافة قسم</button>
+                </div>
+                <p class="card-note" id="orgNote"></p>
+                <div id="orgTree"></div>
+                <div class="alert" id="orgMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="orgMsgText"></span></div>
+            </section>
+        </div>
+
         <!-- الحضور اليومي (مدير) -->
         <div class="panel hidden" data-panel="daily">
             <section class="card">
@@ -207,6 +289,8 @@
             </section>
         </div>
     </main>
+        </div>
+    </div>
 
     <!-- نافذة ملف الموظف -->
     <dialog id="empDialog" class="wide" aria-labelledby="empTitle">
@@ -233,20 +317,26 @@
             <h4 class="sec-title">البيانات الوظيفية</h4>
             <div class="form-grid">
                 <div class="field"><label for="e_empNo">رقم الموظف</label><input id="e_empNo" data-f="empNo" dir="ltr" placeholder="يُولَّد تلقائياً"></div>
-                <div class="field"><label for="e_department">القسم</label><input id="e_department" data-f="department" list="deptList"></div>
-                <div class="field"><label for="e_jobTitle">المسمى الوظيفي</label><input id="e_jobTitle" data-f="jobTitle" list="titleList"></div>
+                <div class="field"><label for="e_departmentId">القسم</label><select id="e_departmentId" data-f="departmentId"></select></div>
+                <div class="field"><label for="e_jobTitleId">المسمى الوظيفي</label><select id="e_jobTitleId" data-f="jobTitleId"></select></div>
                 <div class="field"><label for="e_empType">نوع التوظيف</label><select id="e_empType" data-f="empType"><option value="">—</option><option>دوام كامل</option><option>دوام جزئي</option><option>عقد</option><option>متدرب</option></select></div>
                 <div class="field"><label for="e_hireDate">تاريخ التعيين</label><input type="date" id="e_hireDate" data-f="hireDate"></div>
                 <div class="field"><label for="e_salary">الراتب الأساسي</label><input type="number" id="e_salary" data-f="salary" min="0" step="0.01" dir="ltr"></div>
                 <div class="field"><label for="e_status">الحالة *</label><select id="e_status" data-f="status"><option value="active">على رأس العمل</option><option value="leave">في إجازة</option><option value="terminated">منتهي الخدمة</option></select></div>
             </div>
-            <datalist id="deptList"></datalist><datalist id="titleList"></datalist>
+            <div class="hint-line" id="e_gradeHint"></div>
 
             <h4 class="sec-title">حساب الدخول والحضور</h4>
             <div class="form-grid">
                 <div class="field span2"><label for="e_userId">حساب الدخول المرتبط بهذا الموظف</label><select id="e_userId" data-f="userId"></select></div>
             </div>
             <div class="att-summary hidden" id="empAtt" aria-live="polite"></div>
+
+            <h4 class="sec-title">التسلسل الإداري</h4>
+            <div class="form-grid">
+                <div class="field span2"><label for="e_managerId">الرئيس المباشر</label><select id="e_managerId" data-f="managerId"></select></div>
+            </div>
+            <div class="hint-line" id="empSubs"></div>
 
             <h4 class="sec-title">جهة اتصال للطوارئ</h4>
             <div class="form-grid">
@@ -263,6 +353,55 @@
         </form>
     </dialog>
 
+    <!-- نافذة المسمى الوظيفي -->
+    <dialog id="titleDialog" aria-labelledby="titleDlgTitle">
+        <form method="dialog" id="titleForm" novalidate>
+            <h3 id="titleDlgTitle">إضافة مسمى وظيفي</h3>
+            <div class="field"><label for="t_name">المسمى الوظيفي *</label><input id="t_name" data-t="name"></div>
+            <div class="form-grid">
+                <div class="field"><label for="t_code">الرمز</label><input id="t_code" data-t="code" dir="ltr" placeholder="يُولَّد تلقائياً"></div>
+                <div class="field"><label for="t_gradeId">الدرجة في سلم الرواتب</label><select id="t_gradeId" data-t="gradeId"></select></div>
+            </div>
+            <div class="field" style="margin-top:16px"><label for="t_description">الوصف</label><textarea id="t_description" data-t="description" rows="3"></textarea></div>
+            <div class="field"><label for="t_active">الحالة</label><select id="t_active" data-t="active"><option value="1">فعّال</option><option value="0">معطّل</option></select></div>
+            <div class="alert" id="titleMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="titleMsgText"></span></div>
+            <div class="dialog-actions"><button type="button" class="btn secondary" id="titleCancel">إلغاء</button><button type="submit" class="btn">حفظ</button></div>
+        </form>
+    </dialog>
+
+    <!-- نافذة الدرجة -->
+    <dialog id="gradeDialog" aria-labelledby="gradeDlgTitle">
+        <form method="dialog" id="gradeForm" novalidate>
+            <h3 id="gradeDlgTitle">إضافة درجة</h3>
+            <div class="form-grid">
+                <div class="field span2"><label for="g_name">اسم الدرجة *</label><input id="g_name" data-g="name" placeholder="مثال: الدرجة الأولى"></div>
+                <div class="field"><label for="g_code">الرمز</label><input id="g_code" data-g="code" dir="ltr" placeholder="يُولَّد تلقائياً"></div>
+                <div class="field"><label for="g_increment">العلاوة السنوية</label><input type="number" id="g_increment" data-g="increment" min="0" step="0.01" dir="ltr"></div>
+                <div class="field"><label for="g_min">الحد الأدنى للراتب *</label><input type="number" id="g_min" data-g="min" min="0" step="0.01" dir="ltr"></div>
+                <div class="field"><label for="g_max">الحد الأعلى للراتب *</label><input type="number" id="g_max" data-g="max" min="0" step="0.01" dir="ltr"></div>
+            </div>
+            <div class="field" style="margin-top:16px"><label for="g_notes">ملاحظات</label><textarea id="g_notes" data-g="notes" rows="2"></textarea></div>
+            <div class="alert" id="gradeMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="gradeMsgText"></span></div>
+            <div class="dialog-actions"><button type="button" class="btn secondary" id="gradeCancel">إلغاء</button><button type="submit" class="btn">حفظ</button></div>
+        </form>
+    </dialog>
+
+    <!-- نافذة القسم -->
+    <dialog id="deptDialog" aria-labelledby="deptDlgTitle">
+        <form method="dialog" id="deptForm" novalidate>
+            <h3 id="deptDlgTitle">إضافة قسم</h3>
+            <div class="form-grid">
+                <div class="field span2"><label for="d_name">اسم القسم *</label><input id="d_name" data-d="name"></div>
+                <div class="field"><label for="d_code">الرمز</label><input id="d_code" data-d="code" dir="ltr" placeholder="يُولَّد تلقائياً"></div>
+                <div class="field"><label for="d_parentId">يتبع القسم</label><select id="d_parentId" data-d="parentId"></select></div>
+                <div class="field span2"><label for="d_managerId">مدير القسم</label><select id="d_managerId" data-d="managerId"></select></div>
+            </div>
+            <div class="field" style="margin-top:16px"><label for="d_notes">ملاحظات</label><textarea id="d_notes" data-d="notes" rows="2"></textarea></div>
+            <div class="alert" id="deptMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="deptMsgText"></span></div>
+            <div class="dialog-actions"><button type="button" class="btn secondary" id="deptCancel">إلغاء</button><button type="submit" class="btn">حفظ</button></div>
+        </form>
+    </dialog>
+
     <!-- نافذة العقد -->
     <dialog id="contractDialog" class="wide" aria-labelledby="contractTitle">
         <form method="dialog" id="contractForm" novalidate>
@@ -270,15 +409,17 @@
             <div class="form-grid">
                 <div class="field span2"><label for="c_employeeId">الموظف *</label><select id="c_employeeId" data-c="employeeId"></select></div>
                 <div class="field"><label for="c_contractNo">رقم العقد</label><input id="c_contractNo" data-c="contractNo" dir="ltr" placeholder="يُولَّد تلقائياً"></div>
-                <div class="field"><label for="c_type">نوع العقد *</label><select id="c_type" data-c="type"></select></div>
+                <div class="field"><label for="c_payBasis">نوع الأجر *</label><select id="c_payBasis" data-c="payBasis"></select></div>
+                <div class="field"><label for="c_type">مدة العقد *</label><select id="c_type" data-c="type"></select></div>
                 <div class="field"><label for="c_startDate">تاريخ البداية *</label><input type="date" id="c_startDate" data-c="startDate"></div>
                 <div class="field"><label for="c_endDate">تاريخ الانتهاء</label><input type="date" id="c_endDate" data-c="endDate"></div>
-                <div class="field"><label for="c_basicSalary">الراتب الأساسي *</label><input type="number" id="c_basicSalary" data-c="basicSalary" min="0" step="0.01" dir="ltr"></div>
+                <div class="field"><label for="c_basicSalary" id="c_basicLabel">الراتب الأساسي *</label><input type="number" id="c_basicSalary" data-c="basicSalary" min="0" step="0.01" dir="ltr"></div>
                 <div class="field"><label for="c_allowances">البدلات</label><input type="number" id="c_allowances" data-c="allowances" min="0" step="0.01" dir="ltr"></div>
                 <div class="field"><label for="c_jobTitle">المسمى الوظيفي</label><input id="c_jobTitle" data-c="jobTitle"></div>
                 <div class="field"><label for="c_status">حالة العقد</label><select id="c_status" data-c="status"><option value="active">فعّال</option><option value="cancelled">ملغى</option></select></div>
             </div>
             <p class="card-note" id="cSum" style="margin:12px 0 0"></p>
+            <div class="hint-line" id="cGrade"></div>
             <div class="field" style="margin-top:16px"><label for="c_notes">ملاحظات</label><textarea id="c_notes" data-c="notes" rows="3"></textarea></div>
             <div class="alert" id="contractMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="contractMsgText"></span></div>
             <div class="dialog-actions">

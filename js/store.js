@@ -80,21 +80,46 @@ const Store = (() => {
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','leave','terminated')),
       emergency_name TEXT, emergency_phone TEXT, notes TEXT,
       user_id TEXT,
+      department_id TEXT, job_title_id TEXT, manager_id TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS contracts (
       id TEXT PRIMARY KEY,
       contract_no TEXT NOT NULL UNIQUE,
       employee_id TEXT NOT NULL,
       type TEXT NOT NULL,
+      pay_basis TEXT NOT NULL DEFAULT 'monthly',
       start_date TEXT NOT NULL, end_date TEXT,
       basic_salary REAL NOT NULL, allowances REAL NOT NULL DEFAULT 0,
       job_title TEXT,
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','cancelled')),
       notes TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-    CREATE INDEX IF NOT EXISTS idx_contracts_emp ON contracts(employee_id);`;
+    CREATE INDEX IF NOT EXISTS idx_contracts_emp ON contracts(employee_id);
+    CREATE TABLE IF NOT EXISTS salary_grades (
+      id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+      min_salary REAL NOT NULL, max_salary REAL NOT NULL, increment REAL NOT NULL DEFAULT 0, notes TEXT);
+    CREATE TABLE IF NOT EXISTS job_titles (
+      id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE,
+      grade_id TEXT, description TEXT, active INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE IF NOT EXISTS departments (
+      id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE,
+      parent_id TEXT, manager_id TEXT, notes TEXT);`;
 
   let cfg = { ...DEFAULTS };
+  const nextCode = (table, prefix) => {
+    const max = all(`SELECT code FROM ${table}`).reduce((m, r) => Math.max(m, Number((r.code.match(/\d+$/) || [0])[0])), 0);
+    return `${prefix}-${String(max + 1).padStart(4, '0')}`;
+  };
+  // ترقية بيانات قديمة: الأقسام والمسميات المكتوبة نصاً في ملفات الموظفين تتحول إلى سجلات في الأدلة
+  function backfillCatalogs() {
+    for (const [col, idCol, table, prefix] of [['department', 'department_id', 'departments', 'DEP'], ['job_title', 'job_title_id', 'job_titles', 'JOB']]) {
+      all(`SELECT DISTINCT ${col} AS n FROM employees WHERE ${idCol} IS NULL AND ${col} IS NOT NULL AND TRIM(${col}) != ''`).forEach(r => {
+        let row = all(`SELECT id FROM ${table} WHERE name = ?`, [r.n])[0];
+        if (!row) { row = { id: uid() }; run(`INSERT INTO ${table} (id, code, name) VALUES (?,?,?)`, [row.id, nextCode(table, prefix), r.n]); }
+        run(`UPDATE employees SET ${idCol} = ? WHERE ${idCol} IS NULL AND ${col} = ?`, [row.id, r.n]);
+      });
+    }
+  }
   function ensureSchema() {
     db.exec(SCHEMA);
     // ترقية قواعد قديمة: عمود active
@@ -106,7 +131,12 @@ const Store = (() => {
     addCol('records', 'edited_at', 'TEXT');
     addCol('users', 'can_hr', 'INTEGER NOT NULL DEFAULT 0');
     addCol('employees', 'user_id', 'TEXT');
+    addCol('employees', 'department_id', 'TEXT');
+    addCol('employees', 'job_title_id', 'TEXT');
+    addCol('employees', 'manager_id', 'TEXT');
+    addCol('contracts', 'pay_basis', "TEXT NOT NULL DEFAULT 'monthly'");
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_emp_user ON employees(user_id) WHERE user_id IS NOT NULL');
+    backfillCatalogs();
     cfg = { ...DEFAULTS };
     all('SELECT key, value FROM settings').forEach(r => { if (r.key in DEFAULTS) cfg[r.key] = r.value; });
   }
@@ -155,10 +185,11 @@ const Store = (() => {
   const canEditAttendance = u => !!u && (u.role === 'admin' || u.canEdit === 1);
   const canHr = u => !!u && (u.role === 'admin' || u.canHr === 1); // مسؤول موارد بشرية
   const NO_HR = 'ليست لديك صلاحية الموارد البشرية';
-  const CONTRACT = `SELECT id, contract_no AS contractNo, employee_id AS employeeId, type, start_date AS startDate, end_date AS endDate,
+  const CONTRACT = `SELECT id, contract_no AS contractNo, employee_id AS employeeId, type, pay_basis AS payBasis, start_date AS startDate, end_date AS endDate,
     basic_salary AS basicSalary, allowances, job_title AS jobTitle, status, notes FROM contracts`;
   const FAR = '9999-12-31';
   const CONTRACT_TYPES = ['دائم', 'محدد المدة', 'تجريبي', 'موسمي', 'دوام جزئي'];
+  const PAY_BASES = ['monthly', 'daily', 'volunteer']; // شهري / يومي / متطوع
   const SELF_HR = 'لا يمكنك تعديل ملفك الشخصي أو عقدك بنفسك';
   // ملف موظف مرتبط بحساب الممارِس: لا يعدّله إلا المدير (فصل المسؤوليات)
   const ownsEmployee = (actor, empId) => !!empId && all('SELECT 1 FROM employees WHERE id = ? AND user_id = ?', [empId, actor.id]).length > 0;
@@ -166,7 +197,8 @@ const Store = (() => {
   const NO_EDIT = 'ليست لديك صلاحية تعديل الحضور';
   const EMP = `SELECT id, emp_no AS empNo, name, national_id AS nationalId, gender, birth_date AS birthDate, nationality, marital,
     phone, email, address, department, job_title AS jobTitle, emp_type AS empType, hire_date AS hireDate, salary, status,
-    emergency_name AS emergencyName, emergency_phone AS emergencyPhone, notes, user_id AS userId FROM employees`;
+    emergency_name AS emergencyName, emergency_phone AS emergencyPhone, notes, user_id AS userId,
+    department_id AS departmentId, job_title_id AS jobTitleId, manager_id AS managerId FROM employees`;
   const trim = v => (v == null ? '' : String(v).trim());
   const checkPw = pw => need(pw && pw.length >= 6, 'كلمة المرور يجب ألا تقل عن 6 أحرف');
   const localISO = (date, hhmm) => { const [y, m, d] = date.split('-').map(Number), [h, mi] = hhmm.split(':').map(Number); return new Date(y, m - 1, d, h, mi).toISOString(); };
@@ -253,7 +285,7 @@ const Store = (() => {
       need(canHr(actor), NO_HR);
       const f = {};
       for (const k of ['empNo', 'name', 'nationalId', 'gender', 'birthDate', 'nationality', 'marital', 'phone', 'email', 'address',
-        'department', 'jobTitle', 'empType', 'hireDate', 'status', 'emergencyName', 'emergencyPhone', 'notes']) f[k] = trim(e[k]);
+        'empType', 'hireDate', 'status', 'emergencyName', 'emergencyPhone', 'notes']) f[k] = trim(e[k]);
       need(f.name.length >= 3, 'أدخل الاسم الكامل للموظف');
       need(['active', 'leave', 'terminated'].includes(f.status), 'اختر حالة الموظف');
       need(!f.email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email), 'البريد الإلكتروني غير صحيح');
@@ -274,6 +306,21 @@ const Store = (() => {
         need(!used || used.id === id, 'هذا الحساب مرتبط بموظف آخر');
       }
       need(isAdmin(actor) || (userId !== actor.id && !ownsEmployee(actor, id)), SELF_HR);
+      // القسم والمسمى الوظيفي من الأدلة (يُحفظ اسمهما أيضاً للعرض والتصدير)
+      const departmentId = trim(e.departmentId) || null, jobTitleId = trim(e.jobTitleId) || null, managerId = trim(e.managerId) || null;
+      f.department = ''; f.jobTitle = '';
+      if (departmentId) { const d = all('SELECT name FROM departments WHERE id = ?', [departmentId])[0]; need(d, 'القسم غير موجود'); f.department = d.name; }
+      if (jobTitleId) { const t = all('SELECT name FROM job_titles WHERE id = ?', [jobTitleId])[0]; need(t, 'المسمى الوظيفي غير موجود'); f.jobTitle = t.name; }
+      if (managerId) { // الرئيس المباشر: لا يكون الموظف نفسه، ولا منتهي الخدمة، ولا يُنشئ حلقة في التسلسل
+        need(managerId !== id, 'لا يمكن أن يكون الموظف رئيساً لنفسه');
+        const m = all('SELECT status FROM employees WHERE id = ?', [managerId])[0];
+        need(m, 'الرئيس المباشر غير موجود');
+        need(m.status !== 'terminated', 'لا يمكن إسناد الإشراف لموظف منتهي الخدمة');
+        for (let cur = managerId, guard = 0; cur && guard < 1000; guard++) {
+          need(cur !== id, 'هذا الإسناد يُنشئ حلقة في التسلسل الإداري (الرئيس سيصبح مرؤوساً لمرؤوسه)');
+          cur = all('SELECT manager_id FROM employees WHERE id = ?', [cur])[0]?.manager_id;
+        }
+      }
       const dupNo = all('SELECT id FROM employees WHERE emp_no = ?', [f.empNo])[0];
       need(!dupNo || dupNo.id === id, 'رقم الموظف مستخدم مسبقاً');
       if (f.nationalId) {
@@ -282,11 +329,11 @@ const Store = (() => {
       }
       const now = new Date().toISOString();
       const vals = [f.empNo, f.name, f.nationalId || null, f.gender, f.birthDate, f.nationality, f.marital, f.phone, f.email, f.address,
-        f.department, f.jobTitle, f.empType, f.hireDate, salary, f.status, f.emergencyName, f.emergencyPhone, f.notes, userId];
+        f.department, f.jobTitle, f.empType, f.hireDate, salary, f.status, f.emergencyName, f.emergencyPhone, f.notes, userId, departmentId, jobTitleId, managerId];
       if (id) run(`UPDATE employees SET emp_no=?, name=?, national_id=?, gender=?, birth_date=?, nationality=?, marital=?, phone=?, email=?, address=?,
-        department=?, job_title=?, emp_type=?, hire_date=?, salary=?, status=?, emergency_name=?, emergency_phone=?, notes=?, user_id=?, updated_at=? WHERE id=?`, [...vals, now, id]);
+        department=?, job_title=?, emp_type=?, hire_date=?, salary=?, status=?, emergency_name=?, emergency_phone=?, notes=?, user_id=?, department_id=?, job_title_id=?, manager_id=?, updated_at=? WHERE id=?`, [...vals, now, id]);
       else run(`INSERT INTO employees (emp_no, name, national_id, gender, birth_date, nationality, marital, phone, email, address, department, job_title,
-        emp_type, hire_date, salary, status, emergency_name, emergency_phone, notes, user_id, id, created_at, updated_at) VALUES (${'?,'.repeat(22)}?)`, [...vals, uid(), now, now]);
+        emp_type, hire_date, salary, status, emergency_name, emergency_phone, notes, user_id, department_id, job_title_id, manager_id, id, created_at, updated_at) VALUES (${'?,'.repeat(25)}?)`, [...vals, uid(), now, now]);
       return persist();
     },
     deleteEmployee(id) {
@@ -294,12 +341,14 @@ const Store = (() => {
       need(canHr(actor), NO_HR);
       need(isAdmin(actor) || !ownsEmployee(actor, id), SELF_HR);
       run('DELETE FROM contracts WHERE employee_id = ?', [id]);
+      run('UPDATE employees SET manager_id = NULL WHERE manager_id = ?', [id]); // مرؤوسوه بلا رئيس حتى يُسند لهم غيره
+      run('UPDATE departments SET manager_id = NULL WHERE manager_id = ?', [id]);
       run('DELETE FROM employees WHERE id = ?', [id]);
       return persist();
     },
 
     // ---------- العقود ----------
-    contractTypes: CONTRACT_TYPES,
+    contractTypes: CONTRACT_TYPES, payBases: PAY_BASES,
     contracts() { need(canHr(this.currentUser()), NO_HR); return all(`${CONTRACT} ORDER BY start_date DESC, contract_no DESC`); },
     nextContractNo() {
       const max = all('SELECT contract_no FROM contracts').reduce((m, r) => Math.max(m, Number((r.contract_no.match(/\d+$/) || [0])[0])), 0);
@@ -322,16 +371,21 @@ const Store = (() => {
       const id = c.id || null, empId = trim(c.employeeId);
       need(all('SELECT 1 FROM employees WHERE id = ?', [empId]).length, 'اختر الموظف');
       need(isAdmin(actor) || (!ownsEmployee(actor, empId) && !(id && ownsEmployee(actor, all('SELECT employee_id FROM contracts WHERE id = ?', [id])[0]?.employee_id))), SELF_HR);
-      const type = trim(c.type), start = trim(c.startDate), end = trim(c.endDate), status = trim(c.status) || 'active';
+      const type = trim(c.type), start = trim(c.startDate), end = trim(c.endDate), status = trim(c.status) || 'active', payBasis = trim(c.payBasis) || 'monthly';
+      need(PAY_BASES.includes(payBasis), 'اختر نوع الأجر: شهري أو يومي أو متطوع');
       need(CONTRACT_TYPES.includes(type), 'اختر نوع العقد');
       need(/^\d{4}-\d\d-\d\d$/.test(start), 'أدخل تاريخ بداية العقد');
       need(!end || /^\d{4}-\d\d-\d\d$/.test(end), 'تاريخ انتهاء غير صحيح');
       if (type === 'دائم') need(!end, 'العقد الدائم لا يحتاج تاريخ انتهاء');
       else need(end, 'أدخل تاريخ انتهاء العقد');
       need(!end || end >= start, 'تاريخ الانتهاء يجب ألا يسبق تاريخ البداية');
-      const basic = Number(c.basicSalary), allow = trim(c.allowances) === '' ? 0 : Number(c.allowances);
-      need(trim(c.basicSalary) !== '' && Number.isFinite(basic) && basic >= 0, 'أدخل الراتب الأساسي (رقماً موجباً)');
-      need(Number.isFinite(allow) && allow >= 0, 'البدلات يجب أن تكون رقماً موجباً');
+      let basic = Number(c.basicSalary), allow = trim(c.allowances) === '' ? 0 : Number(c.allowances);
+      if (payBasis === 'volunteer') { basic = 0; allow = 0; } // المتطوع بلا أجر
+      else {
+        need(trim(c.basicSalary) !== '' && Number.isFinite(basic) && basic >= 0, payBasis === 'daily' ? 'أدخل الأجر اليومي (رقماً موجباً)' : 'أدخل الراتب الأساسي (رقماً موجباً)');
+        need(payBasis !== 'daily' || basic > 0, 'الأجر اليومي يجب أن يكون أكبر من صفر');
+        need(Number.isFinite(allow) && allow >= 0, 'البدلات يجب أن تكون رقماً موجباً');
+      }
       need(['active', 'cancelled'].includes(status), 'حالة العقد غير صحيحة');
       const no = trim(c.contractNo) || this.nextContractNo();
       const dupNo = all('SELECT id FROM contracts WHERE contract_no = ?', [no])[0];
@@ -342,10 +396,10 @@ const Store = (() => {
         need(!clash, 'يتداخل هذا العقد مع عقد آخر ساري لنفس الموظف');
       }
       const now = new Date().toISOString(), job = trim(c.jobTitle), notes = trim(c.notes);
-      if (id) run('UPDATE contracts SET contract_no=?, employee_id=?, type=?, start_date=?, end_date=?, basic_salary=?, allowances=?, job_title=?, status=?, notes=?, updated_at=? WHERE id=?',
-        [no, empId, type, start, end || null, basic, allow, job, status, notes, now, id]);
-      else run('INSERT INTO contracts (id, contract_no, employee_id, type, start_date, end_date, basic_salary, allowances, job_title, status, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        [uid(), no, empId, type, start, end || null, basic, allow, job, status, notes, now, now]);
+      if (id) run('UPDATE contracts SET contract_no=?, employee_id=?, type=?, pay_basis=?, start_date=?, end_date=?, basic_salary=?, allowances=?, job_title=?, status=?, notes=?, updated_at=? WHERE id=?',
+        [no, empId, type, payBasis, start, end || null, basic, allow, job, status, notes, now, id]);
+      else run('INSERT INTO contracts (id, contract_no, employee_id, type, pay_basis, start_date, end_date, basic_salary, allowances, job_title, status, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [uid(), no, empId, type, payBasis, start, end || null, basic, allow, job, status, notes, now, now]);
       return persist();
     },
     deleteContract(id) {
@@ -355,6 +409,97 @@ const Store = (() => {
       need(row, 'العقد غير موجود');
       need(isAdmin(actor) || !ownsEmployee(actor, row.employee_id), SELF_HR);
       run('DELETE FROM contracts WHERE id = ?', [id]);
+      return persist();
+    },
+
+
+    // ---------- سلم الرواتب والمسميات والهيكل التنظيمي (موارد بشرية) ----------
+    grades() { need(canHr(this.currentUser()), NO_HR); return all('SELECT id, code, name, min_salary AS min, max_salary AS max, increment, notes FROM salary_grades ORDER BY min_salary, code'); },
+    nextGradeCode: () => nextCode('salary_grades', 'GR'),
+    saveGrade(g) {
+      need(canHr(this.currentUser()), NO_HR);
+      const id = g.id || null, name = trim(g.name), min = Number(g.min), max = Number(g.max), inc = trim(g.increment) === '' ? 0 : Number(g.increment);
+      need(name.length >= 2, 'أدخل اسم الدرجة');
+      need(trim(g.min) !== '' && Number.isFinite(min) && min >= 0, 'أدخل الحد الأدنى للراتب');
+      need(trim(g.max) !== '' && Number.isFinite(max) && max >= min, 'الحد الأعلى يجب ألا يقل عن الحد الأدنى');
+      need(Number.isFinite(inc) && inc >= 0, 'العلاوة السنوية يجب أن تكون رقماً موجباً');
+      const code = trim(g.code) || this.nextGradeCode();
+      const dup = all('SELECT id FROM salary_grades WHERE code = ?', [code])[0];
+      need(!dup || dup.id === id, 'رمز الدرجة مستخدم مسبقاً');
+      if (id) run('UPDATE salary_grades SET code=?, name=?, min_salary=?, max_salary=?, increment=?, notes=? WHERE id=?', [code, name, min, max, inc, trim(g.notes), id]);
+      else run('INSERT INTO salary_grades (id, code, name, min_salary, max_salary, increment, notes) VALUES (?,?,?,?,?,?,?)', [uid(), code, name, min, max, inc, trim(g.notes)]);
+      return persist();
+    },
+    deleteGrade(id) {
+      need(canHr(this.currentUser()), NO_HR);
+      const n = all('SELECT COUNT(*) AS n FROM job_titles WHERE grade_id = ?', [id])[0].n;
+      need(!n, `لا يمكن حذف الدرجة: مرتبطة بـ ${n} مسمى وظيفي`);
+      run('DELETE FROM salary_grades WHERE id = ?', [id]);
+      return persist();
+    },
+    // نطاق راتب الموظف حسب درجة مسماه الوظيفي (أو null)
+    gradeRange(employeeId) {
+      need(canHr(this.currentUser()), NO_HR);
+      return all(`SELECT g.code, g.name, g.min_salary AS min, g.max_salary AS max FROM employees e
+        JOIN job_titles t ON t.id = e.job_title_id JOIN salary_grades g ON g.id = t.grade_id WHERE e.id = ?`, [employeeId])[0] || null;
+    },
+
+    jobTitles() { need(canHr(this.currentUser()), NO_HR); return all('SELECT id, code, name, grade_id AS gradeId, description, active FROM job_titles ORDER BY code'); },
+    nextTitleCode: () => nextCode('job_titles', 'JOB'),
+    saveJobTitle(t) {
+      need(canHr(this.currentUser()), NO_HR);
+      const id = t.id || null, name = trim(t.name), gradeId = trim(t.gradeId) || null;
+      need(name.length >= 2, 'أدخل اسم المسمى الوظيفي');
+      need(!gradeId || all('SELECT 1 FROM salary_grades WHERE id = ?', [gradeId]).length, 'الدرجة غير موجودة');
+      const code = trim(t.code) || this.nextTitleCode();
+      const dupNo = all('SELECT id FROM job_titles WHERE code = ?', [code])[0], dupName = all('SELECT id FROM job_titles WHERE name = ?', [name])[0];
+      need(!dupNo || dupNo.id === id, 'رمز المسمى مستخدم مسبقاً');
+      need(!dupName || dupName.id === id, 'اسم المسمى الوظيفي موجود مسبقاً');
+      const active = t.active === 0 || t.active === '0' || t.active === false ? 0 : 1;
+      if (id) { run('UPDATE job_titles SET code=?, name=?, grade_id=?, description=?, active=? WHERE id=?', [code, name, gradeId, trim(t.description), active, id]);
+        run('UPDATE employees SET job_title = ? WHERE job_title_id = ?', [name, id]); } // يبقى الاسم المعروض متطابقاً بعد إعادة التسمية
+      else run('INSERT INTO job_titles (id, code, name, grade_id, description, active) VALUES (?,?,?,?,?,?)', [uid(), code, name, gradeId, trim(t.description), active]);
+      return persist();
+    },
+    deleteJobTitle(id) {
+      need(canHr(this.currentUser()), NO_HR);
+      const n = all('SELECT COUNT(*) AS n FROM employees WHERE job_title_id = ?', [id])[0].n;
+      need(!n, `لا يمكن حذف المسمى: يشغله ${n} موظف. عطّله بدلاً من حذفه`);
+      run('DELETE FROM job_titles WHERE id = ?', [id]);
+      return persist();
+    },
+
+    departments() { need(canHr(this.currentUser()), NO_HR); return all('SELECT id, code, name, parent_id AS parentId, manager_id AS managerId, notes FROM departments ORDER BY code'); },
+    nextDepartmentCode: () => nextCode('departments', 'DEP'),
+    saveDepartment(d) {
+      need(canHr(this.currentUser()), NO_HR);
+      const id = d.id || null, name = trim(d.name), parentId = trim(d.parentId) || null, managerId = trim(d.managerId) || null;
+      need(name.length >= 2, 'أدخل اسم القسم');
+      need(!managerId || all('SELECT 1 FROM employees WHERE id = ?', [managerId]).length, 'مدير القسم غير موجود');
+      if (parentId) {
+        need(parentId !== id, 'لا يمكن أن يكون القسم تابعاً لنفسه');
+        need(all('SELECT 1 FROM departments WHERE id = ?', [parentId]).length, 'القسم الأعلى غير موجود');
+        for (let cur = parentId, guard = 0; cur && guard < 1000; guard++) { // منع الحلقات في الهيكل
+          need(cur !== id, 'هذا الإسناد يُنشئ حلقة في الهيكل التنظيمي');
+          cur = all('SELECT parent_id FROM departments WHERE id = ?', [cur])[0]?.parent_id;
+        }
+      }
+      const code = trim(d.code) || this.nextDepartmentCode();
+      const dupNo = all('SELECT id FROM departments WHERE code = ?', [code])[0], dupName = all('SELECT id FROM departments WHERE name = ?', [name])[0];
+      need(!dupNo || dupNo.id === id, 'رمز القسم مستخدم مسبقاً');
+      need(!dupName || dupName.id === id, 'اسم القسم موجود مسبقاً');
+      if (id) { run('UPDATE departments SET code=?, name=?, parent_id=?, manager_id=?, notes=? WHERE id=?', [code, name, parentId, managerId, trim(d.notes), id]);
+        run('UPDATE employees SET department = ? WHERE department_id = ?', [name, id]); }
+      else run('INSERT INTO departments (id, code, name, parent_id, manager_id, notes) VALUES (?,?,?,?,?,?)', [uid(), code, name, parentId, managerId, trim(d.notes)]);
+      return persist();
+    },
+    deleteDepartment(id) {
+      need(canHr(this.currentUser()), NO_HR);
+      const kids = all('SELECT COUNT(*) AS n FROM departments WHERE parent_id = ?', [id])[0].n;
+      const emps = all('SELECT COUNT(*) AS n FROM employees WHERE department_id = ?', [id])[0].n;
+      need(!kids, `لا يمكن حذف القسم: يتبعه ${kids} قسم فرعي`);
+      need(!emps, `لا يمكن حذف القسم: يعمل فيه ${emps} موظف`);
+      run('DELETE FROM departments WHERE id = ?', [id]);
       return persist();
     },
 
