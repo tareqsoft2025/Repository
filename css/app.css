@@ -314,6 +314,9 @@ details[open] > summary .caret { transform: rotate(180deg); }
 .ladder-nums { direction: ltr; display: flex; justify-content: space-between; margin-top: 6px; font-size: var(--text-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
 @media (max-width: 640px) { .ladder-row { grid-template-columns: 1fr; gap: var(--s2); } }
 
+.check { display: flex; align-items: center; gap: var(--s2); font-size: var(--text-sm); font-weight: 500; cursor: pointer; margin-top: var(--s3); }
+.check input { width: 18px; height: 18px; accent-color: var(--primary); }
+.check.hidden + .hint-line { display: none; }
 .hint-line { font-size: var(--text-xs); margin-top: var(--s2); color: var(--text-muted); }
 .hint-line.warn { color: var(--warning-ink); font-weight: 600; }
 .hint-line.good { color: var(--success-ink); }

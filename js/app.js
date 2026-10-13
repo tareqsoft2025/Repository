@@ -121,6 +121,7 @@ function filteredEmployees() {
     (!q || [e.name, e.empNo, e.nationalId, e.phone, e.email].some(v => String(v || '').toLowerCase().includes(q))));
 }
 function renderHr() {
+  $('hrOk').classList.remove('show');
   empCache = Store.employees();
   $('hTotal').textContent = empCache.length;
   $('hActive').textContent = empCache.filter(e => e.status === 'active').length;
@@ -165,7 +166,12 @@ function openEmpDialog(emp) {
     .filter(x => !blocked.has(x.id) && (x.status !== 'terminated' || x.id === emp?.managerId))
     .map(x => new Option(`${x.name}${x.jobTitle ? ' — ' + x.jobTitle : ''}`, x.id)));
   document.querySelectorAll('#empForm [data-f]').forEach(el => { el.value = emp ? (emp[el.dataset.f] ?? '') : (el.dataset.f === 'status' ? 'active' : ''); });
-  if (!emp) $('e_empNo').placeholder = Store.nextEmpNo();
+  $('e_empNo').value = emp ? emp.empNo : Store.nextEmpNo();
+  const canCreate = !emp?.userId; // لا يُنشأ حساب إن كان الموظف مرتبطاً بحساب
+  $('e_createWrap').classList.toggle('hidden', !canCreate);
+  $('e_accHint').classList.toggle('hidden', !canCreate);
+  $('e_createAccount').checked = canCreate && !emp; // الافتراضي: حساب تلقائي للموظف الجديد فقط
+  syncCreateAccount();
   const subs = emp ? empCache.filter(x => x.managerId === emp.id) : [];
   $('empSubs').textContent = subs.length ? `يرأس ${subs.length} موظف: ${subs.slice(0, 8).map(x => x.name).join('، ')}${subs.length > 8 ? '…' : ''}` : (emp ? 'لا يوجد مرؤوسون لهذا الموظف' : '');
   updateEmpAtt(); updateGradeHint();
@@ -199,9 +205,16 @@ function updateGradeHint() {
   box.textContent = `الدرجة: ${g.name} (${g.code}) — نطاق الراتب ${money(g.min)} إلى ${money(g.max)}`;
   if (sal !== null && (sal < g.min || sal > g.max)) { box.textContent += ' — الراتب المدخل خارج النطاق'; box.classList.add('warn'); }
 }
+// عند اختيار إنشاء الحساب تلقائياً يُعطَّل اختيار حساب موجود
+function syncCreateAccount() {
+  const on = $('e_createAccount').checked && !$('e_createWrap').classList.contains('hidden');
+  if (on) $('e_userId').value = '';
+  $('e_userId').disabled = on;
+}
 function employeeFromForm() {
   const e = { id: $('empForm').dataset.id || undefined };
   document.querySelectorAll('#empForm [data-f]').forEach(el => { e[el.dataset.f] = el.value; });
+  e.createAccount = $('e_createAccount').checked && !$('e_createWrap').classList.contains('hidden');
   return e;
 }
 
@@ -271,11 +284,11 @@ function openContractDialog(c, renewFrom) {
   $('c_payBasis').replaceChildren(...Store.payBases.map(k => new Option(PAY_LABEL[k], k)));
   $('contractForm').dataset.id = c ? c.id : '';
   $('contractTitle').textContent = c ? `تعديل العقد ${c.contractNo}` : renewFrom ? `تجديد العقد ${renewFrom.contractNo}` : 'إضافة عقد';
-  $('c_contractNo').placeholder = Store.nextContractNo();
+  $('c_contractNo').value = c ? c.contractNo : Store.nextContractNo();
   const src = c || renewFrom;
   document.querySelectorAll('#contractForm [data-c]').forEach(el => { el.value = src ? (src[el.dataset.c] ?? '') : (el.dataset.c === 'status' ? 'active' : el.dataset.c === 'payBasis' ? 'monthly' : ''); });
   if (renewFrom) {
-    $('c_contractNo').value = ''; $('c_status').value = 'active';
+    $('c_status').value = 'active';
     const start = renewFrom.endDate ? addDays(renewFrom.endDate, 1) : Store.dateKey(new Date());
     $('c_startDate').value = start;
     $('c_endDate').value = renewFrom.endDate ? addDays(start, Math.round((new Date(renewFrom.endDate) - new Date(renewFrom.startDate)) / 86400000)) : '';
@@ -492,6 +505,7 @@ function renderUsers() {
     cell(tr, u.name); numCell(tr, u.username);
     badgeCell(tr, u.role === 'admin' ? 'مدير' : 'موظف', u.role === 'admin' ? 'admin' : 'off');
     badgeCell(tr, u.active ? 'فعّال' : 'معطّل', u.active ? '' : 'bad');
+    if (u.mustChange) { const b = document.createElement('span'); b.className = 'badge late'; b.style.marginInlineStart = '6px'; b.textContent = 'كلمة مرور مؤقتة'; tr.lastChild.appendChild(b); }
     permCell(tr, u);
     actionsCell(tr,
       u.role === 'admin' ? iconBtn('briefcase', 'المدير يملك كل الصلاحيات', null, false, true) : iconBtn('briefcase', u.canHr ? 'سحب صلاحية الموارد البشرية' : 'منح صلاحية الموارد البشرية', async () => {
@@ -516,6 +530,7 @@ function openPwDialog(user) {
   $('pwTitle').textContent = self ? 'تغيير كلمة المرور' : `إعادة تعيين كلمة مرور ${user.name}`;
   $('pwOldWrap').classList.toggle('hidden', !self);
   $('pwOld').required = self;
+  $('pwHint').textContent = self ? '' : 'سيُطلب من المستخدم تغيير كلمة المرور هذه عند أول دخول.';
   $('pwDialog').showModal();
 }
 
@@ -598,9 +613,25 @@ async function act(fn) {
   refresh();
 }
 
+// أول دخول بكلمة مرور مؤقتة: نافذة لا تُغلق حتى يغيّرها
+function showFirstLogin() {
+  $('app').setAttribute('inert', ''); $('app').style.visibility = 'hidden'; // لا شيء من النظام يظهر قبل تغيير كلمة المرور
+  const dlg = $('firstDialog');
+  dlg.addEventListener('cancel', e => e.preventDefault()); // لا يُسمح بتجاوزها بزر Esc
+  $('firstLogout').onclick = () => { Store.logout(); location.replace('login.html'); };
+  $('firstForm').onsubmit = async e => {
+    e.preventDefault(); hideAlert('firstMsg');
+    if ($('fpNew').value !== $('fpConfirm').value) return showAlert('firstMsg', 'تأكيد كلمة المرور غير مطابق');
+    try { await Store.completeFirstLogin($('fpNew').value); location.reload(); }
+    catch (err) { showAlert('firstMsg', err.message); }
+  };
+  dlg.showModal(); $('fpNew').focus();
+}
+
 function init() {
   me = Store.currentUser();
   if (!me) return location.replace('login.html');
+  if (me.mustChange) return showFirstLogin();
   $('userName').textContent = me.name;
   const myEmp = Store.employeeOfUser(me.id);
   $('userRole').textContent = [myEmp?.jobTitle, myEmp?.department].filter(Boolean).join(' · ') || (me.role === 'admin' ? 'مدير' : 'موظف');
@@ -637,7 +668,10 @@ function init() {
     $('empCancel').onclick = () => $('empDialog').close();
     $('empForm').onsubmit = async e => {
       e.preventDefault(); hideAlert('empMsg');
-      try { await Store.saveEmployee(employeeFromForm()); $('empDialog').close(); refresh(); }
+      try {
+        const res = await Store.saveEmployee(employeeFromForm()); $('empDialog').close(); refresh();
+        if (res.accountCreated && $('hrOk')) { $('hrOkText').textContent = `تم إنشاء حساب الدخول — اسم المستخدم: ${res.accountCreated} وكلمة المرور المؤقتة: رقم الهوية نفسه. سيُطلب من الموظف تغييرها عند أول دخول.`; $('hrOk').classList.add('show'); }
+      }
       catch (err) { showAlert('empMsg', err.message); $('empDialog').scrollTo({ top: $('empDialog').scrollHeight }); }
     };
     ['hSearch', 'hStatus', 'hDept'].forEach(id => $(id).addEventListener('input', renderHr));
@@ -646,6 +680,7 @@ function init() {
         .concat(filteredEmployees().map(x => [x.empNo, x.name, x.nationalId, x.gender, x.birthDate, x.nationality, x.marital, x.phone, x.email, x.address, x.department, x.jobTitle, x.empType, x.hireDate, EMP_STATUS[x.status][0]])));
 
     $('e_userId').onchange = updateEmpAtt;
+    $('e_createAccount').onchange = () => { syncCreateAccount(); updateEmpAtt(); };
     $('e_jobTitleId').onchange = updateGradeHint;
     $('e_salary').addEventListener('input', updateGradeHint);
     $('e_departmentId').onchange = () => { // اقتراح مدير القسم رئيساً إن لم يُحدَّد رئيس
