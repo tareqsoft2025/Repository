@@ -856,6 +856,179 @@ const Store = (() => {
       return all("SELECT id, name FROM users WHERE active = 1 ORDER BY name").map(u => ({ name: u.name, ...this.attendanceSummary(u.id, month) }));
     },
 
+    // ---------- بيانات تجريبية (للمدير): تُحمَّل وتُحذف دون المساس ببيانات حقيقية ----------
+    // كل صف تنشئه الدالة معرّفه يبدأ بـ demo_ ، فيُحذف بدقة. الأدلة الموجودة بالاسم نفسه تُستخدم ولا تُحذف.
+    demoStatus() {
+      const loaded = !!all("SELECT 1 FROM settings WHERE key = 'demo_loaded'")[0];
+      const n = (t, col = 'id') => all(`SELECT COUNT(*) AS n FROM ${t} WHERE ${col} LIKE 'demo_%'`)[0].n;
+      return { loaded, counts: loaded ? { employees: n('employees'), contracts: n('contracts'), accounts: n('users'), records: n('records') } : null,
+        accounts: loaded ? all("SELECT username, name, role, can_hr AS canHr FROM users WHERE id LIKE 'demo_u_%' ORDER BY name") : [] };
+    },
+    async loadDemoData() {
+      need(isAdmin(this.currentUser()), ADMIN_ONLY);
+      need(!this.demoStatus().loaded, 'البيانات التجريبية محمّلة بالفعل. احذفها أولاً لإعادة التحميل');
+      const today = dateKey(new Date()), rel = n => { const d = new Date(); d.setDate(d.getDate() + n); return dateKey(d); };
+      const iso = new Date().toISOString(), D = 'demo_';
+      const pwHash = await hashPw('demo1234');
+      db.exec('BEGIN'); // معاملة واحدة: عند أي خطأ لا يبقى شيء
+      try {
+      // ----- أدلة: إعادة استخدام ما له الاسم نفسه -----
+      const ensure = (table, name, insert) => { const r = all(`SELECT id FROM ${table} WHERE name = ?`, [name])[0]; if (r) return r.id; const id = D + uid(); insert(id); return id; };
+      const grade = {};
+      [['المستوى الأول', 2500, 3500, 100], ['المستوى الثاني', 3500, 5000, 150], ['المستوى الثالث', 5000, 7500, 250], ['المستوى الرابع', 7500, 10500, 300], ['المستوى الخامس', 10500, 15000, 450]].forEach(([name, min, max, inc], i) => {
+        grade[i + 1] = ensure('salary_grades', name, id => run('INSERT INTO salary_grades (id, code, name, min_salary, max_salary, increment, notes) VALUES (?,?,?,?,?,?,?)', [id, nextCode('salary_grades', 'GR'), name, min, max, inc, 'درجة تجريبية']));
+      });
+      const gradeRow = i => all('SELECT min_salary AS min, increment AS inc FROM salary_grades WHERE id = ?', [grade[i]])[0];
+      const dept = {};
+      [['gm', 'الإدارة العامة', null], ['hr', 'الموارد البشرية', 'gm'], ['fin', 'الشؤون المالية', 'gm'], ['it', 'تقنية المعلومات', 'gm'], ['prj', 'المشاريع', 'gm'], ['ops', 'العمليات والخدمات', 'gm']].forEach(([k, name, parent]) => {
+        dept[k] = ensure('departments', name, id => run('INSERT INTO departments (id, code, name, parent_id, manager_id, notes) VALUES (?,?,?,?,NULL,?)', [id, nextCode('departments', 'DEP'), name, parent ? dept[parent] : null, 'قسم تجريبي']));
+      });
+      const title = {};
+      [['مدير عام', 5], ['مدير إدارة', 4], ['مسؤول موارد بشرية', 3], ['محاسب', 3], ['محاسب مساعد', 2], ['مطور برمجيات', 3], ['مهندس شبكات', 3], ['منسق مشاريع', 3], ['مشرف ميداني', 2], ['عامل مياومة', 1], ['متطوع ميداني', 1]].forEach(([name, g]) => {
+        title[name] = ensure('job_titles', name, id => run('INSERT INTO job_titles (id, code, name, grade_id, description, active) VALUES (?,?,?,?,?,1)', [id, nextCode('job_titles', 'JOB'), name, grade[g], 'مسمى تجريبي']));
+      });
+      // ----- الموظفون: [مفتاح، الاسم، English، الجنس، الميلاد، مكان الميلاد، القسم، المسمى، المدير، التعيين، الحالة، النوع، حساب] -----
+      const E = [
+        ['salim', 'د. سليم حسن الأغا', 'Dr. Salim Hassan Alagha', 'ذكر', '1974-05-12', 'غزة', 'gm', 'مدير عام', null, rel(-4000), 'active', 'دوام كامل', 'salim'],
+        ['huda', 'هدى خالد النجار', 'Huda Khaled Alnajjar', 'أنثى', '1982-09-03', 'غزة', 'hr', 'مدير إدارة', 'salim', rel(-3200), 'active', 'دوام كامل', null],
+        ['rami', 'رامي يوسف عودة', 'Rami Yousef Odeh', 'ذكر', '1980-02-21', 'خان يونس', 'fin', 'مدير إدارة', 'salim', rel(-2900), 'active', 'دوام كامل', null],
+        ['ahmed', 'أحمد محمد سالم', 'Ahmed Mohammed Salem', 'ذكر', '1992-11-30', 'غزة', 'fin', 'محاسب', 'rami', rel(-520), 'active', 'دوام كامل', 'ahmed'],
+        ['laila', 'ليلى عبد الله شحادة', 'Laila Abdullah Shehadeh', 'أنثى', '1998-04-17', 'رفح', 'fin', 'محاسب مساعد', 'rami', rel(-210), 'active', 'دوام كامل', 'laila'],
+        ['karim', 'كريم ناصر الخطيب', 'Karim Nasser Alkhatib', 'ذكر', '1985-07-08', 'غزة', 'it', 'مدير إدارة', 'salim', rel(-1800), 'active', 'دوام كامل', null],
+        ['sara', 'سارة محمود أبو شمالة', 'Sara Mahmoud Abu Shamala', 'أنثى', '1996-01-25', 'دير البلح', 'it', 'مطور برمجيات', 'karim', rel(-900), 'leave', 'دوام كامل', 'sara'],
+        ['omar', 'عمر فؤاد الريس', 'Omar Fouad Alrayes', 'ذكر', '1994-12-02', 'غزة', 'it', 'مهندس شبكات', 'karim', rel(-65), 'active', 'دوام كامل', null],
+        ['dina', 'دينا إبراهيم مطر', 'Dina Ibrahim Matar', 'أنثى', '1983-03-14', 'جباليا', 'prj', 'مدير إدارة', 'salim', rel(-2400), 'active', 'دوام كامل', null],
+        ['yousef', 'يوسف أنور حمدان', 'Yousef Anwar Hamdan', 'ذكر', '1991-06-19', 'غزة', 'prj', 'منسق مشاريع', 'dina', rel(-130), 'active', 'عقد', 'yousef'],
+        ['mona', 'منى سامي القدوة', 'Mona Sami Alqudwa', 'أنثى', '1995-08-27', 'خان يونس', 'prj', 'مشرف ميداني', 'dina', rel(-35), 'active', 'عقد', 'mona'],
+        ['tareq', 'طارق جمال الشوا', 'Tareq Jamal Alshawa', 'ذكر', '1988-10-05', 'غزة', 'ops', 'مشرف ميداني', 'salim', rel(-1500), 'active', 'دوام كامل', null],
+        ['nadine', 'نادين أحمد عاشور', 'Nadine Ahmed Ashour', 'أنثى', '1993-05-09', 'غزة', 'hr', 'مسؤول موارد بشرية', 'huda', rel(-1100), 'active', 'دوام كامل', 'hr.demo'],
+        ['mohammed', 'محمد سعيد البنا', 'Mohammed Saeed Albanna', 'ذكر', '1990-01-15', 'رفح', 'ops', 'عامل مياومة', 'tareq', rel(-20), 'active', 'عقد', null],
+        ['ismail', 'إسماعيل رائد أبو عمرو', 'Ismail Raed Abu Amro', 'ذكر', '1997-09-22', 'بيت لاهيا', 'ops', 'عامل مياومة', 'tareq', rel(-5), 'active', 'عقد', null],
+        ['aya', 'آية سعيد قنديل', 'Aya Saeed Qandeel', 'أنثى', '2000-03-30', 'غزة', 'prj', 'متطوع ميداني', 'mona', rel(-15), 'active', 'متدرب', 'aya'],
+        ['jamil', 'جميل حسام الدين', 'Jamil Hossam Aldeen', 'ذكر', '1987-02-11', 'غزة', 'fin', 'محاسب', 'rami', rel(-700), 'terminated', 'دوام كامل', null],
+      ];
+      const QUAL = { salim: [['دكتوراه', 'إدارة أعمال', 'جامعة القاهرة', 2008, 88]], huda: [['ماجستير', 'إدارة موارد بشرية', 'الجامعة الإسلامية', 2014, 85]], rami: [['بكالوريوس', 'محاسبة', 'جامعة الأزهر', 2005, 82.5]],
+        ahmed: [['بكالوريوس', 'محاسبة', 'جامعة الأقصى', 2014, 79]], laila: [['دبلوم', 'محاسبة', 'كلية فلسطين التقنية', 2019, 84]], karim: [['ماجستير', 'هندسة حاسوب', 'الجامعة الإسلامية', 2012, 87]],
+        sara: [['بكالوريوس', 'علوم حاسوب', 'جامعة الأزهر', 2018, 91]], omar: [['بكالوريوس', 'هندسة اتصالات', 'جامعة الأقصى', 2017, 80]], dina: [['ماجستير', 'إدارة مشاريع', 'جامعة بيرزيت', 2012, 89]],
+        yousef: [['بكالوريوس', 'هندسة مدنية', 'جامعة الأزهر', 2014, 83]], mona: [['بكالوريوس', 'خدمة اجتماعية', 'جامعة الأقصى', 2017, 78]], tareq: [['دبلوم', 'إدارة أعمال', 'كلية فلسطين التقنية', 2008, 75]],
+        nadine: [['بكالوريوس', 'إدارة أعمال', 'الجامعة الإسلامية', 2015, 81]], mohammed: [['ثانوية عامة', 'علمي', 'مدرسة الشهيد', 2008, 70]], ismail: [['ثانوية عامة', 'أدبي', 'مدرسة الكرامة', 2015, 66]],
+        aya: [['بكالوريوس', 'هندسة زراعية', 'جامعة الأقصى', 2022, 86]], jamil: [['بكالوريوس', 'محاسبة', 'جامعة الأزهر', 2010, 77]] };
+      const COURSE = { ahmed: [['محاسبة متقدمة', 30, '2021-03-07', '2021-03-11', 'معهد الإدارة'], ['Excel للمحاسبين', 16, '2022-01-09', '2022-01-12', 'Microsoft Learning']], sara: [['تطوير تطبيقات الويب', 40, '2022-06-05', '2022-06-16', 'أكاديمية البرمجة']],
+        yousef: [['إدارة المشاريع PMP', 35, '2021-11-01', '2021-11-10', 'PMI Chapter']], nadine: [['قانون العمل', 24, '2020-02-02', '2020-02-05', 'نقابة المحامين']], karim: [['أمن الشبكات', 32, '2019-04-14', '2019-04-20', 'Cisco Academy']] };
+      const EXP = { ahmed: [['شركة الأفق للتجارة', 'محاسب', '2015-01-01', '2020-12-31']], karim: [['شركة جوال للاتصالات', 'مهندس شبكات', '2012-03-01', '2017-06-30']], dina: [['مؤسسة التنمية المجتمعية', 'منسق برامج', '2013-01-01', '2018-12-31']],
+        rami: [['مكتب الخبرة للتدقيق', 'مدقق حسابات', '2006-01-01', '2013-12-31']], sara: [['شركة سوفت لاين', 'مطور مبتدئ', '2019-01-01', '2021-12-31']], salim: [['جامعة الأزهر', 'محاضر', '2008-09-01', '2014-08-31']] };
+      // ----- أرقام تلقائية متسلسلة لا تتعارض مع الموجود -----
+      let empSeq = seqNext('seq_employees', 'employees', 'emp_no') - 1, ctSeq = seqNext('seq_contracts', 'contracts', 'contract_no') - 1;
+      const emp = {}; let nid = 4000000;
+      for (const [k, name, nameEn, gender, birth, place, d, t] of E) {
+        const nat = String(++nid).padStart(9, '0');
+        need(!all('SELECT 1 FROM employees WHERE national_id = ?', [nat])[0], `رقم هوية تجريبي ${nat} مستخدم مسبقاً`);
+        emp[k] = { id: D + 'e_' + k, no: `EMP-${String(++empSeq).padStart(4, '0')}`, nat };
+      }
+      // ----- حسابات الدخول -----
+      const accountOf = {}, hasUser = id => !!all('SELECT 1 FROM users WHERE id = ?', [id])[0];
+      for (const row of E) {
+        const [k, name, , , , , , , , , , , acct] = row; if (!acct) continue;
+        if (acct === 'ahmed') { // حساب ahmed التجريبي الأصلي إن وُجد ولم يرتبط بملف
+          if (hasUser('u_ahmed') && !all("SELECT 1 FROM employees WHERE user_id = 'u_ahmed'")[0]) accountOf[k] = 'u_ahmed';
+          continue;
+        }
+        need(!all('SELECT 1 FROM users WHERE username = ?', [acct])[0], `اسم المستخدم التجريبي «${acct}» مستخدم مسبقاً`);
+        accountOf[k] = D + 'u_' + acct;
+        run('INSERT INTO users (id, username, password, name, role, can_edit, can_hr, must_change) VALUES (?,?,?,?,?,?,?,0)', [accountOf[k], acct, pwHash, name, 'employee', acct === 'hr.demo' ? 1 : 0, acct === 'hr.demo' ? 1 : 0]);
+      }
+      // ----- ملفات الموظفين -----
+      const empCols = 'id, emp_no, name, national_id, gender, birth_date, nationality, marital, phone, email, address, department, job_title, emp_type, hire_date, salary, status, emergency_name, emergency_phone, notes, user_id, department_id, job_title_id, manager_id, name_en, birth_place, created_at, updated_at';
+      const deptName = Object.fromEntries(all('SELECT id, name FROM departments').map(r => [r.id, r.name]));
+      E.forEach(([k, name, nameEn, gender, birth, place, d, t, mgr, hire, status, type], i) => {
+        run(`INSERT INTO employees (${empCols}) VALUES (${'?,'.repeat(27)}?)`, [emp[k].id, emp[k].no, name, emp[k].nat, gender, birth, 'فلسطيني', i % 3 === 0 ? 'أعزب' : 'متزوج',
+          '059' + String(7000000 + i * 1111).padStart(7, '0'), `${k}@demo.example`, 'غزة — حي الرمال', deptName[dept[d]], t, type, hire, null, status, 'قريب الموظف', '059' + String(8000000 + i * 777).padStart(7, '0'),
+          'بيانات تجريبية', accountOf[k] || null, dept[d], title[t], mgr ? emp[mgr].id : null, nameEn, place, iso, iso]);
+      });
+      [['gm', 'salim'], ['hr', 'huda'], ['fin', 'rami'], ['it', 'karim'], ['prj', 'dina'], ['ops', 'tareq']].forEach(([d, k]) => { if (dept[d].startsWith(D)) run('UPDATE departments SET manager_id = ? WHERE id = ?', [emp[k].id, dept[d]]); });
+      let n = 0;
+      for (const [k, list] of Object.entries(QUAL)) list.forEach(([degree, major, uni, year, gpa]) => run('INSERT INTO qualifications (id, employee_id, degree, major, university, grad_year, gpa) VALUES (?,?,?,?,?,?,?)', [D + 'q' + ++n, emp[k].id, degree, major, uni, year, gpa]));
+      for (const [k, list] of Object.entries(COURSE)) list.forEach(([name, hours, from, to, org]) => run('INSERT INTO courses (id, employee_id, name, hours, from_date, to_date, organizer) VALUES (?,?,?,?,?,?,?)', [D + 'c' + ++n, emp[k].id, name, hours, from, to, org]));
+      for (const [k, list] of Object.entries(EXP)) list.forEach(([employer, jt, from, to]) => run('INSERT INTO experiences (id, employee_id, employer, job_title, from_date, to_date) VALUES (?,?,?,?,?,?)', [D + 'x' + ++n, emp[k].id, employer, jt, from, to]));
+      // مرفقات نموذجية صغيرة (PDF صالح) لتجربة التحميل
+      const pdf = text => { const stream = `BT /F1 14 Tf 20 100 Td (${text}) Tj ET`, objs = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+          '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>', `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
+        let out = '%PDF-1.4\n'; const offs = objs.map((o, i) => { const at = out.length; out += `${i + 1} 0 obj\n${o}\nendobj\n`; return at; });
+        const xref = out.length; out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+        return new TextEncoder().encode(out); };
+      for (const [k, nameEn, kind, ref] of [['salim', 'Dr. Salim Hassan Alagha', 'id', null], ['ahmed', 'Ahmed Mohammed Salem', 'id', null]]) {
+        const f = pdf(`Demo ID document - ${nameEn}`); run('INSERT INTO documents (id, employee_id, kind, ref_id, name, mime, size, data, created_at) VALUES (?,?,?,?,?,?,?,?,?)', [D + 'doc' + ++n, emp[k].id, kind, ref, 'id-demo.pdf', 'application/pdf', f.length, f, iso]);
+      }
+      const qid = all("SELECT id FROM qualifications WHERE employee_id = ?", [emp.ahmed.id])[0].id, qf = pdf('Demo degree certificate - Ahmed Mohammed Salem');
+      run('INSERT INTO documents (id, employee_id, kind, ref_id, name, mime, size, data, created_at) VALUES (?,?,?,?,?,?,?,?,?)', [D + 'doc' + ++n, emp.ahmed.id, 'qualification', qid, 'degree-demo.pdf', 'application/pdf', qf.length, qf, iso]);
+      // ----- العقود -----
+      const ctCols = 'id, contract_no, employee_id, type, pay_basis, start_date, end_date, basic_salary, allowances, job_title, status, notes, issue_date, grade_id, grade_step, currency, project_code, project_name, project_name_en, supervisor_id, work_desc, work_desc_en, inclusions, created_at, updated_at';
+      let ctCount = 0;
+      const addContract = (k, o) => {
+        ctCount++;
+        const c = { type: 'دائم', payBasis: 'monthly', end: null, allow: 0, status: 'active', step: null, grade: null, ...o };
+        let basic = c.basic;
+        if (c.grade) { const g = gradeRow(c.grade); basic = g.min + (c.step - 1) * g.inc; }
+        run(`INSERT INTO contracts (${ctCols}) VALUES (${'?,'.repeat(24)}?)`, [D + 'ct_' + ++ctSeq, `CNT-${String(ctSeq).padStart(4, '0')}`, emp[k].id, c.type, c.payBasis, c.start, c.end, c.payBasis === 'volunteer' ? 0 : basic, c.payBasis === 'volunteer' ? 0 : c.allow,
+          E.find(e => e[0] === k)[7], c.status, 'عقد تجريبي', c.start, c.grade ? grade[c.grade] : null, c.grade ? c.step : null, 'ILS', c.code || '', c.project || '', c.projectEn || '',
+          c.sup ? emp[c.sup].id : null, c.desc || '', c.descEn || '', c.incl || '', iso, iso]);
+      };
+      const hire = k => E.find(e => e[0] === k)[9];
+      addContract('salim', { grade: 5, step: 6, allow: 1500, start: hire('salim'), incl: 'يشمل العقد التأمين الصحي وبدل الاتصالات.' });
+      addContract('huda', { grade: 4, step: 4, allow: 800, start: hire('huda') });
+      addContract('rami', { grade: 4, step: 5, allow: 800, type: 'محدد المدة', start: rel(-300), end: rel(65) });
+      addContract('ahmed', { grade: 3, step: 3, allow: 400, start: hire('ahmed'), incl: 'يشمل العقد بدل مواصلات شهري.' });
+      addContract('laila', { grade: 2, step: 3, allow: 250, type: 'محدد المدة', start: rel(-200), end: rel(20) });
+      addContract('karim', { grade: 4, step: 2, allow: 700, start: hire('karim') });
+      addContract('sara', { grade: 3, step: 2, allow: 300, start: hire('sara') });
+      addContract('omar', { grade: 3, step: 1, allow: 200, type: 'تجريبي', start: rel(-65), end: rel(25) });
+      addContract('dina', { grade: 4, step: 5, allow: 800, start: hire('dina') });
+      addContract('yousef', { grade: 3, step: 1, allow: 300, type: 'محدد المدة', start: rel(-130), end: rel(235) });
+      addContract('mona', { grade: 2, step: 3, allow: 200, type: 'موسمي', start: rel(-35), end: rel(150) });
+      addContract('tareq', { grade: 2, step: 1, allow: 200, start: hire('tareq') });
+      addContract('nadine', { grade: 3, step: 4, allow: 300, start: hire('nadine') });
+      addContract('jamil', { grade: 3, step: 1, allow: 200, type: 'محدد المدة', start: rel(-700), end: rel(-100) });
+      addContract('mohammed', { payBasis: 'daily', type: 'محدد المدة', basic: 120, allow: 10, start: rel(-20), end: rel(40), code: 'WASH-2026', project: 'مشروع المياه والصرف الصحي', projectEn: 'WASH Project', sup: 'tareq', desc: 'عامل مياومة', descEn: 'Daily wage worker' });
+      addContract('mohammed', { payBasis: 'daily', type: 'محدد المدة', basic: 125, allow: 10, start: rel(41), end: rel(100), code: 'WASH-2026', project: 'مشروع المياه والصرف الصحي', projectEn: 'WASH Project', sup: 'tareq', desc: 'عامل مياومة', descEn: 'Daily wage worker' });
+      addContract('ismail', { payBasis: 'daily', type: 'موسمي', basic: 110, allow: 0, start: rel(-5), end: rel(25), code: 'ROAD-2026', project: 'مشروع تأهيل الطرق', projectEn: 'Roads Rehabilitation', sup: 'tareq', desc: 'عامل نظافة وصيانة', descEn: 'Maintenance worker' });
+      addContract('aya', { payBasis: 'volunteer', type: 'محدد المدة', start: rel(-15), end: rel(60), code: 'CAMP-2026', project: 'حملة التشجير', projectEn: 'Tree Planting Campaign', sup: 'mona', desc: 'متطوعة ميدانية', descEn: 'Field volunteer', incl: 'يشمل العقد شهادة تطوع وتغطية وجبات.' });
+      seqCommit('seq_employees', empSeq); seqCommit('seq_contracts', ctSeq);
+      // ----- سجل حضور آخر 3 أسابيع لأصحاب الحسابات (بعقود سارية) -----
+      let seed = 20260101; const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+      let recs = 0;
+      for (const k of ['salim', 'nadine', 'ahmed', 'laila', 'yousef', 'aya', 'mona']) {
+        const uid2 = accountOf[k]; if (!uid2) continue;
+        for (let back = 21; back >= 1; back--) {
+          const date = rel(-back);
+          if (this.isWeekend(date) || date < hire(k) || rnd() < 0.08) continue;
+          const inMin = 470 + Math.floor(rnd() * 80), outMin = 960 + Math.floor(rnd() * 105); // 07:50–09:10 / 16:00–17:45
+          const hm = m => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+          run('INSERT INTO records (id, user_id, date, check_in, check_out) VALUES (?,?,?,?,?)', [D + 'r' + ++n, uid2, date, localISO(date, hm(inMin)), localISO(date, hm(outMin))]);
+          recs++;
+        }
+      }
+      run("INSERT OR REPLACE INTO settings VALUES ('demo_loaded', ?)", [iso]);
+      db.exec('COMMIT');
+      await persist();
+      return { employees: E.length, contracts: ctCount, accounts: Object.keys(accountOf).length, records: recs };
+      } catch (e) { try { db.exec('ROLLBACK'); } catch {} throw e; }
+    },
+    async removeDemoData() {
+      need(isAdmin(this.currentUser()), ADMIN_ONLY);
+      need(this.demoStatus().loaded, 'لا توجد بيانات تجريبية محمّلة');
+      for (const t of ['documents', 'qualifications', 'courses', 'experiences', 'contracts']) run(`DELETE FROM ${t} WHERE id LIKE 'demo_%' OR employee_id LIKE 'demo_%'`);
+      run("DELETE FROM records WHERE id LIKE 'demo_%'");
+      run("UPDATE departments SET manager_id = NULL WHERE manager_id LIKE 'demo_%'");
+      run("UPDATE employees SET manager_id = NULL WHERE manager_id LIKE 'demo_%'");
+      run("DELETE FROM employees WHERE id LIKE 'demo_%'");
+      run("DELETE FROM users WHERE id LIKE 'demo_u_%'");
+      run("DELETE FROM departments WHERE id LIKE 'demo_%'");
+      run("DELETE FROM job_titles WHERE id LIKE 'demo_%'");
+      run("DELETE FROM salary_grades WHERE id LIKE 'demo_%'");
+      run("DELETE FROM settings WHERE key = 'demo_loaded'");
+      await persist();
+    },
+
     // ---------- نسخ احتياطي ----------
     exportDb: () => new Blob([db.export()], { type: 'application/vnd.sqlite3' }),
     async importDb(file) {

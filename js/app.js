@@ -752,7 +752,17 @@ function openPwDialog(user) {
 }
 
 // ---------- الإعدادات (مدير) ----------
+// ---------- بيانات تجريبية ----------
+function renderDemo() {
+  const st = Store.demoStatus();
+  $('demoStatus').textContent = st.loaded ? `البيانات التجريبية محمّلة: ${st.counts.employees} موظفاً، ${st.counts.contracts} عقداً، ${st.counts.accounts} حساباً، ${st.counts.records} سجل حضور.` : 'لم تُحمَّل بيانات تجريبية بعد.';
+  $('loadDemo').disabled = st.loaded; $('removeDemo').disabled = !st.loaded;
+  $('demoAccountsWrap').classList.toggle('hidden', !st.loaded);
+  const rows = st.loaded ? [{ username: 'ahmed', name: 'أحمد محمد سالم', note: 'موظف (محاسب) — حساب النظام الأصلي', pw: '123456' }, ...st.accounts.filter(a => a.username !== 'ahmed').map(a => ({ username: a.username, name: a.name, note: a.canHr ? 'مسؤول موارد بشرية + تعديل الحضور' : 'موظف', pw: 'demo1234' }))] : [];
+  fillRows($('demoAccounts'), rows, (tr, a) => { numCell(tr, a.username); numCell(tr, a.pw); cell(tr, a.name); cell(tr, a.note); }, '', 4);
+}
 function renderSettings() {
+  renderDemo();
   const s = Store.settings, off = s.weekend.split(',');
   $('setStart').value = s.workStart; $('setEnd').value = s.workEnd; $('setGrace').value = s.graceMin;
   $('setOrg').value = s.orgName; $('setTerms').value = s.contractTerms;
@@ -1017,6 +1027,22 @@ function init() {
       } catch (err) { showAlert('setMsg', err.message); }
     };
 
+    // بيانات تجريبية
+    $('loadDemo').onclick = async () => {
+      hideAlert('demoMsg'); $('demoOk').classList.remove('show');
+      if (!confirm('ستُضاف بيانات تجريبية (موظفون وعقود وحسابات وحضور). بياناتك الحالية لا تتأثر. متابعة؟')) return;
+      $('loadDemo').disabled = true;
+      try { const r = await Store.loadDemoData(); $('demoOkText').textContent = `تم تحميل ${r.employees} موظفاً و${r.contracts} عقداً و${r.accounts} حساباً و${r.records} سجل حضور.`; $('demoOk').classList.add('show'); }
+      catch (e) { showAlert('demoMsg', e.message); }
+      renderDemo();
+    };
+    $('removeDemo').onclick = async () => {
+      hideAlert('demoMsg'); $('demoOk').classList.remove('show');
+      if (!confirm('سيُحذف كل ما أُضيف كبيانات تجريبية فقط (بياناتك الحقيقية لا تُمس). متابعة؟')) return;
+      try { await Store.removeDemoData(); $('demoOkText').textContent = 'تم حذف البيانات التجريبية.'; $('demoOk').classList.add('show'); }
+      catch (e) { showAlert('demoMsg', e.message); }
+      renderDemo();
+    };
     // قاعدة البيانات
     $('exportDb').onclick = () => {
       const a = document.createElement('a');
