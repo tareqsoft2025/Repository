@@ -187,12 +187,10 @@
                 <div class="card-head"><h3><svg class="i"><use href="#i-trend"/></svg>سلم الرواتب</h3>
                     <button class="btn" id="addGrade"><svg class="i"><use href="#i-plus"/></svg>إضافة درجة</button>
                 </div>
-                <div class="ladder" id="ladder"></div>
-            </section>
-            <section class="card">
-                <div class="card-head"><h3>تفاصيل الدرجات</h3></div>
-                <div class="table-wrap"><table>
-                    <thead><tr><th>الرمز</th><th>الدرجة</th><th>الحد الأدنى</th><th>الحد الأعلى</th><th>العلاوة السنوية</th><th>عدد العلاوات</th><th>المسميات</th><th class="no-print"></th></tr></thead>
+                <div class="toolbar"><input type="search" id="gSearch" placeholder="بحث: النوع، الوصف، الدرجة..." aria-label="بحث في سلم الرواتب">
+                    <select id="gYear" aria-label="السنة"></select></div>
+                <div class="table-wrap"><table class="compact">
+                    <thead><tr><th>النوع</th><th>السنة</th><th>الإصدار</th><th>الوصف</th><th>المستوى</th><th>الدرجة</th><th>العملة</th><th>الحد الأدنى – الأقصى</th><th>الخطوات</th><th>المسميات</th><th class="no-print">إجراءات</th></tr></thead>
                     <tbody id="gradesBody"></tbody>
                 </table></div>
                 <div class="alert" id="gradesMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="gradesMsgText"></span></div>
@@ -421,12 +419,21 @@
         <form method="dialog" id="gradeForm" novalidate>
             <h3 id="gradeDlgTitle">إضافة درجة</h3>
             <div class="form-grid">
-                <div class="field span2"><label for="g_name">اسم الدرجة *</label><input id="g_name" data-g="name" placeholder="مثال: الدرجة الأولى"></div>
+                <div class="field"><label for="g_scaleType">نوع السلم</label><input id="g_scaleType" data-g="scaleType" placeholder="مثال: سلم الرواتب الموحد"></div>
+                <div class="field"><label for="g_scaleYear">السنة</label><input type="number" id="g_scaleYear" data-g="scaleYear" min="1990" max="2100" dir="ltr"></div>
+                <div class="field"><label for="g_edition">الإصدار</label><input id="g_edition" data-g="edition" placeholder="مثال: الأول"></div>
+                <div class="field"><label for="g_level">المستوى</label><input id="g_level" data-g="level" placeholder="مثال: 1"></div>
+                <div class="field span2"><label for="g_description">الوصف</label><input id="g_description" data-g="description"></div>
+                <div class="field"><label for="g_name">الدرجة *</label><input id="g_name" data-g="name" placeholder="مثال: A"></div>
+                <div class="field"><label for="g_currency">العملة</label><select id="g_currency" data-g="currency"></select></div>
+                <div class="field"><label for="g_min">الحد الأدنى</label><input type="number" id="g_min" min="0" step="0.01" dir="ltr"></div>
+                <div class="field"><label for="g_max">الحد الأقصى</label><input type="number" id="g_max" min="0" step="0.01" dir="ltr"></div>
+                <div class="field"><label for="g_stepCount">عدد الخطوات</label><input type="number" id="g_stepCount" min="1" max="20" value="8" dir="ltr"></div>
+                <div class="field"><label>&nbsp;</label><button type="button" class="btn secondary" id="gGen">توليد الخطوات من الحدين</button></div>
                 <div class="field"><label for="g_code">الرمز</label><input id="g_code" data-g="code" dir="ltr" placeholder="يُولَّد تلقائياً"></div>
-                <div class="field"><label for="g_increment">العلاوة السنوية</label><input type="number" id="g_increment" data-g="increment" min="0" step="0.01" dir="ltr"></div>
-                <div class="field"><label for="g_min">الحد الأدنى للراتب *</label><input type="number" id="g_min" data-g="min" min="0" step="0.01" dir="ltr"></div>
-                <div class="field"><label for="g_max">الحد الأعلى للراتب *</label><input type="number" id="g_max" data-g="max" min="0" step="0.01" dir="ltr"></div>
             </div>
+            <h4 class="sec-title">مبالغ الخطوات (قابلة للتعديل)</h4>
+            <div class="steps-grid" id="gSteps"></div>
             <div class="field" style="margin-top:16px"><label for="g_notes">ملاحظات</label><textarea id="g_notes" data-g="notes" rows="2"></textarea></div>
             <div class="alert" id="gradeMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="gradeMsgText"></span></div>
             <div class="dialog-actions"><button type="button" class="btn secondary" id="gradeCancel">إلغاء</button><button type="submit" class="btn">حفظ</button></div>
@@ -486,7 +493,7 @@
                 <div class="form-grid">
                     <div class="field span2"><label>المنصب والقسم (من ملف الموظف)</label><div class="readonly" id="c_empInfo">—</div></div>
                     <div class="field"><label for="c_gradeId">الدرجة في سلم الرواتب</label><select id="c_gradeId" data-c="gradeId"></select></div>
-                    <div class="field"><label for="c_gradeStep">الخطوة في السلم</label><input type="number" id="c_gradeStep" data-c="gradeStep" min="1" step="1" dir="ltr"></div>
+                    <div class="field"><label for="c_gradeStep">الخطوة في السلم</label><select id="c_gradeStep" data-c="gradeStep"></select></div>
                     <div class="field"><label for="c_jobTitle">المسمى في العقد (اختياري)</label><input id="c_jobTitle" data-c="jobTitle"></div>
                 </div>
                 <div class="hint-line" id="cGradeSug"></div>

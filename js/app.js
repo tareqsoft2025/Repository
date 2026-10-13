@@ -451,19 +451,24 @@ function syncContractPerson(kind) {
   const [search, hidden] = kind === 'employee' ? ['c_employeeSearch', 'c_employeeId'] : ['c_supervisorSearch', 'c_supervisorId'], v = $(search).value.trim();
   $(hidden).value = v ? (cEmpMap[v] || '') : '';
 }
-let lastSug = null;
-function updateGradeSuggest(fromGrade) {
+const gLabel = g => [g.scaleType, g.scaleYear, g.edition && 'إصدار ' + g.edition, g.level && 'مستوى ' + g.level, 'درجة ' + g.name].filter(Boolean).join(' · ');
+function fillGradeSteps(keep) {
+  const g = Store.grades().find(x => x.id === $('c_gradeId').value), sel = $('c_gradeStep');
+  sel.replaceChildren(...(g ? g.steps.map((v, i) => new Option(`${i + 1} — ${money(v)}`, i + 1)) : []));
+  if (g) sel.value = keep && keep <= g.steps.length ? keep : 1;
+}
+// العقد الشهري: الراتب يُجلب مباشرة من خطوة الدرجة المختارة
+function updateGradeSuggest() {
   const g = Store.grades().find(x => x.id === $('c_gradeId').value), box = $('cGradeSug');
   box.className = 'hint-line'; box.textContent = '';
+  const linked = !!g && $('c_payBasis').value === 'monthly';
+  $('c_gradeStep').disabled = !g; $('c_basicSalary').readOnly = linked; $('c_currency').disabled = linked && !!g.currency;
   if (!g) return;
-  const steps = g.increment ? Math.floor((g.max - g.min) / g.increment) + 1 : 1, step = $('c_gradeStep').value === '' ? null : Number($('c_gradeStep').value);
-  box.textContent = `نطاق الدرجة ${money(g.min)} إلى ${money(g.max)}${g.increment ? ` — ${steps} خطوة، العلاوة ${money(g.increment)}` : ''}`;
-  if (step && Number.isInteger(step) && step >= 1 && step <= steps) {
-    const sug = g.min + (step - 1) * g.increment; box.textContent += ` — الراتب المقترح للخطوة ${step}: ${money(sug)}`;
-    const cur = $('c_basicSalary').value;
-    if (cur === '' || Number(cur) === lastSug) { $('c_basicSalary').value = sug; updateContractSum(); }
-    lastSug = sug;
-  } else if (step) { box.textContent += ' — الخطوة خارج نطاق الدرجة'; box.classList.add('warn'); }
+  const step = Number($('c_gradeStep').value) || 1;
+  $('c_basicSalary').value = g.steps[step - 1];
+  if (g.currency) $('c_currency').value = g.currency;
+  box.textContent = `الراتب الأساسي من سلم الرواتب: ${money(g.steps[step - 1])} (الخطوة ${step} من ${g.steps.length}) — نطاق الدرجة ${money(g.min)} إلى ${money(g.max)}`;
+  box.classList.add('good'); updateContractSum();
 }
 function updateContractSum() {
   const basis = $('c_payBasis').value, vol = basis === 'volunteer', cur = $('c_currency').selectedOptions[0]?.textContent || '';
@@ -484,6 +489,10 @@ function updateContractSum() {
 function showContractEmployee() { // معلومات المنصب والقسم من ملف الموظف + درجة مقترحة
   const e = ctEmps[$('c_employeeId').value];
   $('c_empInfo').textContent = e ? [e.jobTitle || 'بلا مسمى', e.department || 'بلا قسم'].join(' · ') : '—';
+  if (e && !$('contractForm').dataset.id && $('c_payBasis').value === 'monthly' && !$('c_gradeId').value) { // درجة مسمى الموظف مقترحة
+    const r = Store.gradeRange(e.id);
+    if (r) { $('c_gradeId').value = r.id; fillGradeSteps(); updateGradeSuggest(); }
+  }
 }
 // c: عقد للتعديل، renewFrom: عقد يُجدَّد، kind: نوع العقد الجديد
 function openContractDialog(c, renewFrom, kind) {
@@ -495,7 +504,7 @@ function openContractDialog(c, renewFrom, kind) {
   $('cEmpList').replaceChildren(...emps.map(e => { const o = document.createElement('option'); o.value = cLabel(e); o.label = e.jobTitle || ''; return o; }));
   $('c_type').replaceChildren(...Store.contractTypes.map(t => new Option(t)));
   $('c_currency').replaceChildren(...Object.entries(Store.currencies).map(([k, v]) => new Option(v, k)));
-  $('c_gradeId').replaceChildren(new Option('-- بدون --', ''), ...Store.grades().map(g => new Option(`${g.code} — ${g.name}`, g.id)));
+  $('c_gradeId').replaceChildren(new Option('-- بدون --', ''), ...Store.grades().map(g => new Option(gLabel(g), g.id)));
   $('contractForm').dataset.id = c ? c.id : '';
   $('contractTitle').textContent = `${c ? 'تعديل' : renewFrom ? 'تجديد' : 'إضافة'} ${KIND[kind].one}${c ? ' ' + c.contractNo : ''}`;
   $('c_empLabel').textContent = `${KIND[kind].who} *`;
@@ -510,7 +519,7 @@ function openContractDialog(c, renewFrom, kind) {
     $('c_endDate').value = renewFrom.endDate ? addDays(start, Math.round((new Date(renewFrom.endDate) - new Date(renewFrom.startDate)) / 86400000)) : '';
   }
   setContractPerson('employee', src?.employeeId); setContractPerson('supervisor', src?.supervisorId);
-  showContractEmployee(); lastSug = null;
+  fillGradeSteps(src?.gradeStep); showContractEmployee();
   updateContractSum(); updateGradeSuggest();
   dlg.showModal();
 }
@@ -564,22 +573,19 @@ function openTitleDialog(t) {
 function renderGrades() {
   hideAlert('gradesMsg');
   gradeCache = Store.grades();
-  const titles = countBy(Store.jobTitles(), 'gradeId'), top = Math.max(...gradeCache.map(g => g.max), 1);
-  const ladder = $('ladder'); ladder.replaceChildren();
-  if (!gradeCache.length) { ladder.innerHTML = '<div class="tree-empty">' + icon('inbox') + '<div>لا توجد درجات بعد. أضف أول درجة لبناء سلم الرواتب</div></div>'; }
-  gradeCache.forEach(g => {
-    const row = document.createElement('div'), lab = document.createElement('div'), body = document.createElement('div'), track = document.createElement('div'), bar = document.createElement('div'), nums = document.createElement('div');
-    row.className = 'ladder-row'; lab.className = 'ladder-label'; track.className = 'ladder-track'; bar.className = 'ladder-bar'; nums.className = 'ladder-nums';
-    const b = document.createElement('b'), sp = document.createElement('span'); b.textContent = g.name; sp.textContent = g.code; lab.append(b, sp);
-    bar.style.left = (g.min / top * 100) + '%'; bar.style.width = Math.max(1.5, (g.max - g.min) / top * 100) + '%';
-    bar.title = `${money(g.min)} – ${money(g.max)}`;
-    track.appendChild(bar);
-    const n1 = document.createElement('span'), n2 = document.createElement('span'); n1.textContent = money(g.min); n2.textContent = money(g.max); nums.append(n1, n2);
-    body.append(track, nums); row.append(lab, body); ladder.appendChild(row);
-  });
-  fillRows($('gradesBody'), gradeCache, (tr, g) => {
-    numCell(tr, g.code); cell(tr, g.name); numCell(tr, money(g.min)); numCell(tr, money(g.max));
-    numCell(tr, g.increment ? money(g.increment) : '—'); numCell(tr, g.increment ? Math.floor((g.max - g.min) / g.increment) : '—'); numCell(tr, titles[g.id] || 0);
+  const titles = countBy(Store.jobTitles(), 'gradeId'), ysel = $('gYear'), keep = ysel.value;
+  ysel.replaceChildren(new Option('كل السنوات', ''), ...[...new Set(gradeCache.map(g => g.scaleYear).filter(Boolean))].sort((a, b) => b - a).map(y => new Option(y, y)));
+  ysel.value = [...ysel.options].some(o => o.value === keep) ? keep : '';
+  const q = $('gSearch').value.trim().toLowerCase();
+  const rows = gradeCache.filter(g => (!ysel.value || String(g.scaleYear) === ysel.value) && (!q || [g.scaleType, g.edition, g.description, g.level, g.name, g.code].join(' ').toLowerCase().includes(q)));
+  fillRows($('gradesBody'), rows, (tr, g) => {
+    cell(tr, g.scaleType || '—'); numCell(tr, g.scaleYear || '—'); cell(tr, g.edition || '—'); cell(tr, g.description || '—'); cell(tr, g.level || '—');
+    cell(tr, g.name); cell(tr, Store.currencies[g.currency] || g.currency || '—');
+    numCell(tr, `${money(g.min)} – ${money(g.max)}`);
+    const td = document.createElement('td'), wrap = document.createElement('div'); wrap.className = 'step-chips';
+    g.steps.forEach((v, i) => { const c = document.createElement('span'); c.className = 'chip'; c.textContent = `${i + 1}: ${money(v)}`; wrap.appendChild(c); });
+    td.appendChild(wrap); tr.appendChild(td);
+    numCell(tr, titles[g.id] || 0);
     actionsCell(tr,
       iconBtn('pencil', 'تعديل الدرجة', () => openGradeDialog(g)),
       iconBtn('trash', 'حذف الدرجة', async () => {
@@ -587,15 +593,33 @@ function renderGrades() {
         if (!confirm(`حذف الدرجة «${g.name}»؟`)) return;
         try { await Store.deleteGrade(g.id); renderGrades(); } catch (e) { showAlert('gradesMsg', e.message); }
       }, true));
-  }, 'لا توجد درجات بعد', 8);
+  }, 'لا توجد درجات بعد', 11);
+}
+function renderStepInputs(vals) {
+  const box = $('gSteps'); box.replaceChildren();
+  vals.forEach((v, i) => {
+    const f = document.createElement('div'), l = document.createElement('label'), inp = document.createElement('input');
+    f.className = 'field'; l.textContent = `الخطوة ${i + 1}`; inp.type = 'number'; inp.min = '0'; inp.step = '0.01'; inp.dir = 'ltr'; inp.value = v; inp.dataset.step = i;
+    l.htmlFor = inp.id = 'g_step' + i; f.append(l, inp); box.appendChild(f);
+  });
+}
+function genStepInputs() {
+  const lo = Number($('g_min').value), hi = Number($('g_max').value), n = Number($('g_stepCount').value);
+  if ($('g_min').value === '' || $('g_max').value === '' || !(hi >= lo) || !Number.isInteger(n) || n < 1 || n > 20) { showAlert('gradeMsg', 'أدخل الحد الأدنى والأقصى وعدد خطوات صحيحاً (1–20) لتوليد الخطوات'); return; }
+  hideAlert('gradeMsg');
+  renderStepInputs(Array.from({ length: n }, (_, i) => n === 1 ? lo : Math.round((lo + i * (hi - lo) / (n - 1)) * 100) / 100));
 }
 function openGradeDialog(g) {
   hideAlert('gradeMsg'); $('gradeForm').reset();
   $('gradeForm').dataset.id = g ? g.id : '';
-  $('gradeDlgTitle').textContent = g ? `تعديل ${g.name}` : 'إضافة درجة';
+  $('gradeDlgTitle').textContent = g ? `تعديل الدرجة ${g.name}` : 'إضافة درجة';
   $('g_code').placeholder = Store.nextGradeCode();
+  $('g_currency').replaceChildren(...Object.entries(Store.currencies).map(([k, v]) => new Option(v, k)));
   document.querySelectorAll('#gradeForm [data-g]').forEach(el => { el.value = g ? String(g[el.dataset.g] ?? '') : ''; });
-  $('gradeDialog').showModal(); $('g_name').focus();
+  if (!g) { $('g_currency').value = Store.settings.currency; $('g_scaleYear').value = new Date().getFullYear(); }
+  $('g_min').value = g ? g.min : ''; $('g_max').value = g ? g.max : ''; $('g_stepCount').value = g ? g.steps.length : 8;
+  renderStepInputs(g ? g.steps : []);
+  $('gradeDialog').showModal(); $('g_scaleType').focus();
 }
 
 // ---------- الهيكل التنظيمي (موارد بشرية) ----------
@@ -935,10 +959,14 @@ function init() {
     };
     ['tSearch', 'tGrade'].forEach(id => $(id).addEventListener('input', renderTitles));
     $('addGrade').onclick = () => openGradeDialog(null);
+    $('gGen').onclick = genStepInputs;
+    ['gSearch', 'gYear'].forEach(id => $(id).addEventListener('input', renderGrades));
     $('gradeCancel').onclick = () => $('gradeDialog').close();
     $('gradeForm').onsubmit = async e => {
       e.preventDefault(); hideAlert('gradeMsg');
       const g = { id: e.target.dataset.id || undefined }; document.querySelectorAll('#gradeForm [data-g]').forEach(el => { g[el.dataset.g] = el.value; });
+      g.min = $('g_min').value; g.max = $('g_max').value; g.stepCount = $('g_stepCount').value;
+      const inputs = [...document.querySelectorAll('#gSteps input')]; if (inputs.length) g.steps = inputs.map(i => i.value === '' ? NaN : i.value);
       try { await Store.saveGrade(g); $('gradeDialog').close(); renderGrades(); } catch (err) { showAlert('gradeMsg', err.message); }
     };
     $('addDept').onclick = () => openDeptDialog(null);
@@ -958,8 +986,8 @@ function init() {
     $('c_currency').addEventListener('change', updateContractSum);
     $('c_employeeSearch').addEventListener('input', () => { syncContractPerson('employee'); showContractEmployee(); updateContractSum(); });
     $('c_supervisorSearch').addEventListener('input', () => syncContractPerson('supervisor'));
-    $('c_gradeId').addEventListener('change', () => { lastSug = null; updateGradeSuggest(); });
-    $('c_gradeStep').addEventListener('input', updateGradeSuggest);
+    $('c_gradeId').addEventListener('change', () => { fillGradeSteps(); updateGradeSuggest(); });
+    $('c_gradeStep').addEventListener('change', updateGradeSuggest);
     $('contractForm').onsubmit = async e => {
       e.preventDefault(); hideAlert('contractMsg');
       const andPrint = e.submitter && e.submitter.id === 'contractSavePrint';
