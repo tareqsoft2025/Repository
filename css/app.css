@@ -91,6 +91,7 @@ main > *, .hero-grid > * { min-width: 0; }
 .status { display: flex; align-items: center; gap: var(--s2); margin: var(--s3) 0 var(--s5); padding: var(--s3) var(--s4); border-radius: var(--radius-sm); background: var(--surface-alt); color: var(--text-muted); font-size: var(--text-sm); }
 .status.on { background: var(--info-tint); color: var(--info-ink); }
 .status.done { background: var(--success-tint); color: var(--success-ink); }
+.status.blocked { background: var(--danger-tint); color: var(--danger-ink); font-weight: 600; }
 .status.late { background: var(--warning-tint); color: var(--warning-ink); }
 .actions { display: flex; flex-wrap: wrap; gap: var(--s3); }
 
@@ -278,6 +279,17 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32
   .pagebar .date { display: none; }
   body.nav-lock { overflow: hidden; }
 }
+
+/* ===== My contract ===== */
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--s3); }
+.fact { background: var(--surface-alt); border-radius: var(--radius-sm); padding: var(--s3) var(--s4); min-width: 0; }
+.fact span { display: block; font-size: var(--text-xs); color: var(--text-muted); }
+.fact b { display: block; font-size: var(--text-base); margin-top: 2px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.contract-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); margin-bottom: var(--s4); }
+.contract-head .no { font-size: var(--text-lg); font-weight: 700; color: var(--primary); }
+.notice { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s4); border-radius: var(--radius-sm); font-size: var(--text-sm); margin-bottom: var(--s4); background: var(--warning-tint); color: var(--warning-ink); }
+.notice.bad { background: var(--danger-tint); color: var(--danger-ink); }
+.sub-title { font-size: var(--text-sm); font-weight: 600; color: var(--text-muted); margin: var(--s5) 0 var(--s2); }
 
 /* ===== Segmented control ===== */
 .seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--surface-alt); border-radius: var(--radius-md); border: 1px solid var(--border); }

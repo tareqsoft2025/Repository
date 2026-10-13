@@ -546,11 +546,49 @@ const Store = (() => {
     },
     canEditAttendance, canHr,
 
+    // ---------- أهلية تسجيل الحضور: لا حضور بدون عقد ساري ----------
+    // الحساب غير المرتبط بملف موظف مستثنى إن كان مديراً (حساب إدارة النظام)
+    // يعيد { ok, contract? , exempt? } أو { ok:false, code, date? } مع سبب الرفض
+    attendanceEligibility(userId, date = dateKey(new Date())) {
+      const u = all('SELECT role FROM users WHERE id = ?', [userId])[0];
+      const emp = all('SELECT id FROM employees WHERE user_id = ?', [userId])[0];
+      if (!emp) return u?.role === 'admin' ? { ok: true, exempt: true } : { ok: false, code: 'no_employee' };
+      const cs = all(`${CONTRACT} WHERE employee_id = ? ORDER BY start_date DESC`, [emp.id]);
+      if (!cs.length) return { ok: false, code: 'no_contract' };
+      const valid = cs.find(c => c.status === 'active' && c.startDate <= date && (!c.endDate || c.endDate >= date));
+      if (valid) return { ok: true, contract: valid };
+      const live = cs.filter(c => c.status === 'active');
+      const upcoming = live.filter(c => c.startDate > date).sort((a, b) => a.startDate.localeCompare(b.startDate))[0];
+      if (upcoming) return { ok: false, code: 'upcoming', date: upcoming.startDate };
+      if (live.length) return { ok: false, code: 'expired', date: live.map(c => c.endDate).sort().pop() };
+      return { ok: false, code: 'cancelled' };
+    },
+    // نص السبب: self=true بصيغة المخاطَب (الموظف نفسه)، وإلا بصيغة الغائب (للموارد البشرية)
+    eligibilityReason(el, self) {
+      const who = self ? 'عقدك' : 'عقد الموظف';
+      return ({
+        no_employee: self ? 'حسابك غير مرتبط بملف موظف' : 'الحساب غير مرتبط بملف موظف',
+        no_contract: self ? 'لا يوجد عقد مرتبط بحسابك' : 'لا يوجد عقد للموظف',
+        upcoming: `يبدأ ${who} في ${el.date}`,
+        expired: `انتهى ${who} في ${el.date}`,
+        cancelled: `${who} ملغى`,
+      })[el.code] || '';
+    },
+    // عقود الموظف المرتبط بالحساب الحالي (للعرض لصاحبه، بلا حاجة لصلاحية الموارد البشرية)
+    myContracts() {
+      const me = this.currentUser();
+      if (!me || me.mustChange) return [];
+      const emp = all('SELECT id FROM employees WHERE user_id = ?', [me.id])[0];
+      return emp ? all(`${CONTRACT} WHERE employee_id = ? ORDER BY start_date DESC`, [emp.id]) : [];
+    },
+
     // ---------- الحضور ----------
     todayRecord: userId => all(`${REC} WHERE user_id = ? AND date = ?`, [userId, dateKey(new Date())])[0] || null,
     checkIn(userId) {
       need(!this.currentUser()?.mustChange, MUST_CHANGE);
       need(!this.todayRecord(userId), 'تم تسجيل الحضور اليوم مسبقاً');
+      const el = this.attendanceEligibility(userId);
+      need(el.ok, `لا يمكن تسجيل الحضور: ${this.eligibilityReason(el, this.currentUser()?.id === userId)}. تواصل مع الموارد البشرية`);
       const now = new Date();
       run('INSERT INTO records (id, user_id, date, check_in) VALUES (?,?,?,?)', [uid(), userId, dateKey(now), now.toISOString()]);
       return persist();
@@ -575,6 +613,8 @@ const Store = (() => {
       const stamp = new Date().toISOString();
       need(userId && /^\d{4}-\d\d-\d\d$/.test(date), 'اختر الموظف والتاريخ');
       need(/^\d\d:\d\d$/.test(checkIn), 'أدخل وقت الحضور');
+      const el = this.attendanceEligibility(userId, date);
+      need(el.ok, `لا يمكن حفظ سجل حضور بتاريخ ${date}: ${this.eligibilityReason(el, false)}`);
       const cin = localISO(date, checkIn), cout = checkOut ? localISO(date, checkOut) : null;
       need(!cout || cout > cin, 'وقت الانصراف يجب أن يكون بعد وقت الحضور');
       const dup = all('SELECT id FROM records WHERE user_id = ? AND date = ?', [userId, date])[0];

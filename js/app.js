@@ -74,13 +74,65 @@ function tickClock() {
   $('pageDate').textContent = now.toLocaleDateString(LOCALE, { weekday: 'long', day: 'numeric', month: 'long' });
 }
 function renderToday() {
-  const r = Store.todayRecord(me.id);
-  $('btnIn').disabled = !!r;
+  const r = Store.todayRecord(me.id), el = Store.attendanceEligibility(me.id);
+  $('btnIn').disabled = !!r || !el.ok; // لا حضور بدون عقد ساري
   $('btnOut').disabled = !r || !!r.checkOut;
   $('statusText').textContent = !r ? 'لم تسجل حضورك اليوم بعد'
     : r.checkOut ? `حضور ${fmtTime(r.checkIn)} — انصراف ${fmtTime(r.checkOut)}`
     : `سجلت حضورك الساعة ${fmtTime(r.checkIn)}${Store.isLate(r) ? ' (متأخر)' : ''}`;
   $('status').className = 'status' + (!r ? '' : r.checkOut ? ' done' : Store.isLate(r) ? ' late' : ' on');
+  if (!r && !el.ok) { // سبب المنع يظهر للموظف بدل رسالة «لم تسجل بعد»
+    $('statusText').textContent = `لا يمكنك تسجيل الحضور: ${Store.eligibilityReason(el, true)}. تواصل مع الموارد البشرية`;
+    $('status').className = 'status blocked';
+  }
+}
+
+// ---------- عقدي ----------
+function fact(label, value) {
+  const d = document.createElement('div'), l = document.createElement('span'), v = document.createElement('b');
+  d.className = 'fact'; l.textContent = label; v.textContent = value; d.append(l, v); return d;
+}
+function renderMyContract() {
+  const box = $('myContract'), el = Store.attendanceEligibility(me.id), cs = Store.myContracts(), emp = Store.employeeOfUser(me.id);
+  box.replaceChildren();
+  $('contractCard').classList.toggle('hidden', !!el.exempt && !cs.length); // حساب إدارة بلا ملف موظف: لا بطاقة
+  if (!cs.length) { // لا عقد: تُشرح النتيجة
+    box.innerHTML = '<div class="notice bad">' + icon('alert') + '<span></span></div>';
+    box.querySelector('span').textContent = emp ? 'لا يوجد عقد مرتبط بحسابك. لا يمكنك تسجيل الحضور حتى تُنشئ الموارد البشرية عقدك.' : 'حسابك غير مرتبط بملف موظف، ولا يمكنك تسجيل الحضور حتى يُربط بملفك.';
+    return;
+  }
+  const cur = el.contract || cs.find(c => c.status === 'active') || cs[0], st = Store.contractStatus(cur);
+  const head = document.createElement('div'); head.className = 'contract-head';
+  const no = document.createElement('span'); no.className = 'no'; no.textContent = cur.contractNo;
+  const badge = document.createElement('span'); badge.className = 'badge ' + CT_STATUS[st][1]; badge.textContent = CT_STATUS[st][0];
+  const chip = document.createElement('span'); chip.className = 'chip' + (cur.payBasis === 'volunteer' ? ' gold' : ''); chip.textContent = PAY_LABEL[cur.payBasis];
+  head.append(no, badge, chip); box.appendChild(head);
+
+  const days = cur.endDate ? Math.round((new Date(cur.endDate) - new Date(Store.dateKey(new Date()))) / 86400000) : null;
+  if (!el.ok) { const n = document.createElement('div'); n.className = 'notice bad'; n.innerHTML = icon('alert') + '<span></span>'; n.lastChild.textContent = `لا يمكنك تسجيل الحضور: ${Store.eligibilityReason(el, true)}.`; box.appendChild(n); }
+  else if (st === 'expiring') { const n = document.createElement('div'); n.className = 'notice'; n.innerHTML = icon('alert') + '<span></span>'; n.lastChild.textContent = `ينتهي عقدك بعد ${days} يوماً. بعد انتهائه لن تتمكن من تسجيل الحضور حتى يُجدَّد.`; box.appendChild(n); }
+
+  const facts = document.createElement('div'); facts.className = 'facts';
+  facts.append(fact('مدة العقد', cur.type), fact('تاريخ البداية', cur.startDate), fact('تاريخ الانتهاء', cur.endDate || 'غير محدد'));
+  if (cur.payBasis === 'volunteer') facts.append(fact('الأجر', 'تطوعي — بلا أجر'));
+  else if (cur.payBasis === 'daily') facts.append(fact('الأجر اليومي', money(cur.basicSalary)), fact('البدلات اليومية', money(cur.allowances)), fact('الإجمالي اليومي', money(cur.basicSalary + cur.allowances)));
+  else facts.append(fact('الراتب الأساسي', money(cur.basicSalary)), fact('البدلات', money(cur.allowances)), fact('الإجمالي الشهري', money(cur.basicSalary + cur.allowances)));
+  if (emp) facts.append(fact('رقم الموظف', emp.empNo));
+  const job = cur.jobTitle || emp?.jobTitle; if (job) facts.append(fact('المسمى الوظيفي', job));
+  if (emp?.department) facts.append(fact('القسم', emp.department));
+  if (days !== null && st !== 'expired' && st !== 'cancelled') facts.append(fact('المتبقي على الانتهاء', days >= 0 ? `${days} يوم` : '—'));
+  box.appendChild(facts);
+  if (cur.notes) { const p = document.createElement('p'); p.className = 'card-note'; p.style.marginTop = '12px'; p.textContent = 'ملاحظات: ' + cur.notes; box.appendChild(p); }
+
+  const others = cs.filter(c => c.id !== cur.id);
+  if (others.length) { // سجل العقود السابقة
+    const t = document.createElement('div'); t.className = 'sub-title'; t.textContent = 'العقود السابقة'; box.appendChild(t);
+    const wrap = document.createElement('div'), table = document.createElement('table'), tb = document.createElement('tbody');
+    wrap.className = 'table-wrap'; table.innerHTML = '<thead><tr><th>الرقم</th><th>المدة</th><th>نوع الأجر</th><th>الفترة</th><th>الحالة</th></tr></thead>';
+    others.forEach(c => { const tr = document.createElement('tr'), s2 = Store.contractStatus(c);
+      numCell(tr, c.contractNo); cell(tr, c.type); cell(tr, PAY_LABEL[c.payBasis]); numCell(tr, `${c.startDate} → ${c.endDate || 'غير محدد'}`); badgeCell(tr, CT_STATUS[s2][0], CT_STATUS[s2][1]); tb.appendChild(tr); });
+    table.appendChild(tb); wrap.appendChild(table); box.appendChild(wrap);
+  }
 }
 
 // ---------- لوحتي + الرسم البياني ----------
@@ -547,7 +599,7 @@ function renderSettings() {
 
 // ---------- التنقل والقائمة الجانبية ----------
 const RENDER = { contracts: renderContracts, hr: renderHr, titles: renderTitles, grades: renderGrades, org: renderOrg,
-  me: () => { renderToday(); renderMine(); }, daily: renderAdmin, report: renderReport, users: renderUsers, settings: renderSettings };
+  me: () => { renderToday(); renderMyContract(); renderMine(); }, daily: renderAdmin, report: renderReport, users: renderUsers, settings: renderSettings };
 const HR_TABS = ['hr', 'contracts', 'titles', 'grades', 'org'];
 const PAGES = { me: ['لوحتي', ''], hr: ['ملفات الموظفين', 'شؤون الموظفين'], contracts: ['العقود', 'شؤون الموظفين'], titles: ['المسميات الوظيفية', 'شؤون الموظفين'],
   grades: ['سلم الرواتب', 'شؤون الموظفين'], org: ['الهيكل التنظيمي', 'شؤون الموظفين'], daily: ['الحضور اليومي', 'الحضور والانصراف'],
