@@ -147,6 +147,12 @@ const Store = (() => {
       });
     }
   }
+  const round2 = n => Math.round(n * 100) / 100;
+  // خطوات السلم: توزيع متساوٍ بين الحد الأدنى والأعلى
+  const genSteps = (min, max, n) => n <= 1 ? [round2(min)] : Array.from({ length: n }, (_, i) => round2(min + i * (max - min) / (n - 1)));
+  const parseSteps = v => { try { const a = JSON.parse(v); return Array.isArray(a) ? a.map(Number) : []; } catch { return []; } };
+  const GRADE_COLS = 'id, code, name, min_salary AS min, max_salary AS max, increment, notes, scale_type AS scaleType, scale_year AS scaleYear, edition, description, level, currency, steps';
+  const gradeOut = r => ({ ...r, steps: parseSteps(r.steps) });
   function ensureSchema() {
     db.exec(SCHEMA);
     // ترقية قواعد قديمة: عمود active
@@ -167,6 +173,11 @@ const Store = (() => {
     addCol('contracts', 'pay_basis', "TEXT NOT NULL DEFAULT 'monthly'");
     for (const [c, ddl] of [['issue_date', 'TEXT'], ['grade_id', 'TEXT'], ['grade_step', 'INTEGER'], ['currency', "TEXT NOT NULL DEFAULT 'ILS'"], ['project_code', 'TEXT'],
       ['project_name', 'TEXT'], ['project_name_en', 'TEXT'], ['supervisor_id', 'TEXT'], ['work_desc', 'TEXT'], ['work_desc_en', 'TEXT'], ['inclusions', 'TEXT']]) addCol('contracts', c, ddl);
+    for (const [c, ddl] of [['scale_type', 'TEXT'], ['scale_year', 'INTEGER'], ['edition', 'TEXT'], ['description', 'TEXT'], ['level', 'TEXT'], ['currency', 'TEXT'], ['steps', 'TEXT']]) addCol('salary_grades', c, ddl);
+    all('SELECT id, min_salary AS min, max_salary AS max, increment FROM salary_grades WHERE steps IS NULL').forEach(g => {
+      const n = g.increment > 0 ? Math.min(20, Math.floor((g.max - g.min) / g.increment) + 1) : 1;
+      run('UPDATE salary_grades SET steps = ? WHERE id = ?', [JSON.stringify(Array.from({ length: n }, (_, i) => round2(g.min + i * g.increment))), g.id]);
+    });
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_emp_user ON employees(user_id) WHERE user_id IS NOT NULL');
     backfillCatalogs();
     cfg = { ...DEFAULTS };
@@ -534,7 +545,7 @@ const Store = (() => {
       need(c, 'العقد غير موجود');
       const e = all(`${EMP} WHERE id = ?`, [c.employeeId])[0];
       need(canHr(me) || (e && e.userId === me.id), NO_HR);
-      const grade = c.gradeId ? all('SELECT code, name, min_salary AS min, max_salary AS max, increment FROM salary_grades WHERE id = ?', [c.gradeId])[0] || null : null;
+      const grade = c.gradeId ? (r => r ? gradeOut(r) : null)(all(`SELECT ${GRADE_COLS} FROM salary_grades WHERE id = ?`, [c.gradeId])[0]) : null;
       const sup = c.supervisorId ? all('SELECT name, name_en AS nameEn FROM employees WHERE id = ?', [c.supervisorId])[0] || null : null;
       const dept = e?.departmentId ? all('SELECT name FROM departments WHERE id = ?', [e.departmentId])[0]?.name || '' : '';
       return { contract: c, employee: e, grade, supervisor: sup, department: dept, org: cfg.orgName, terms: cfg.contractTerms,
@@ -567,6 +578,18 @@ const Store = (() => {
       if (type === 'دائم') need(!end, 'العقد الدائم لا يحتاج تاريخ انتهاء');
       else need(end, 'أدخل تاريخ انتهاء العقد');
       need(!end || end >= start, 'تاريخ الانتهاء يجب ألا يسبق تاريخ البداية');
+      // العقد الشهري المرتبط بسلم الرواتب: الراتب الأساسي يُجلب من خطوة الدرجة مباشرة
+      let scaleGrade = null, scaleStep = null;
+      if (payBasis === 'monthly' && trim(c.gradeId)) {
+        const r = all(`SELECT ${GRADE_COLS} FROM salary_grades WHERE id = ?`, [trim(c.gradeId)])[0];
+        need(r, 'الدرجة غير موجودة');
+        scaleGrade = gradeOut(r);
+        scaleStep = trim(c.gradeStep) === '' ? 1 : Number(c.gradeStep);
+        need(Number.isInteger(scaleStep) && scaleStep >= 1, 'رقم الخطوة يجب أن يكون عدداً صحيحاً موجباً');
+        need(scaleStep <= scaleGrade.steps.length, 'الخطوة تتجاوز عدد خطوات الدرجة');
+        c = { ...c, basicSalary: scaleGrade.steps[scaleStep - 1], gradeStep: scaleStep };
+        if (scaleGrade.currency && CURRENCIES[scaleGrade.currency]) c.currency = scaleGrade.currency;
+      }
       let basic = Number(c.basicSalary), allow = trim(c.allowances) === '' ? 0 : Number(c.allowances);
       if (payBasis === 'volunteer') { basic = 0; allow = 0; } // المتطوع بلا أجر
       else {
@@ -589,18 +612,7 @@ const Store = (() => {
       need(/^\d{4}-\d\d-\d\d$/.test(issue), 'تاريخ تحرير العقد غير صحيح');
       const currency = trim(c.currency) || cfg.currency;
       need(CURRENCIES[currency], 'اختر عملة صحيحة');
-      // سلم الرواتب (للعقود الشهرية): الدرجة والخطوة
-      let gradeId = null, gradeStep = null;
-      if (payBasis === 'monthly' && trim(c.gradeId)) {
-        gradeId = trim(c.gradeId);
-        const g = all('SELECT min_salary AS min, max_salary AS max, increment FROM salary_grades WHERE id = ?', [gradeId])[0];
-        need(g, 'الدرجة غير موجودة');
-        if (trim(c.gradeStep) !== '') {
-          gradeStep = Number(c.gradeStep);
-          need(Number.isInteger(gradeStep) && gradeStep >= 1, 'رقم الخطوة يجب أن يكون عدداً صحيحاً موجباً');
-          need(!g.increment || gradeStep <= Math.floor((g.max - g.min) / g.increment) + 1, 'الخطوة تتجاوز عدد خطوات الدرجة');
-        }
-      }
+      const gradeId = scaleGrade ? scaleGrade.id : null, gradeStep = scaleStep;
       // بيانات المشروع (لعقود العمال اليوميين والمتطوعين)
       let pr = { code: '', name: '', nameEn: '', supervisor: null, desc: '', descEn: '' };
       if (payBasis !== 'monthly') {
@@ -640,20 +652,40 @@ const Store = (() => {
 
 
     // ---------- سلم الرواتب والمسميات والهيكل التنظيمي (موارد بشرية) ----------
-    grades() { need(canHr(this.currentUser()), NO_HR); return all('SELECT id, code, name, min_salary AS min, max_salary AS max, increment, notes FROM salary_grades ORDER BY min_salary, code'); },
+    grades() { need(canHr(this.currentUser()), NO_HR); return all(`SELECT ${GRADE_COLS} FROM salary_grades ORDER BY scale_year DESC, scale_type, min_salary, code`).map(gradeOut); },
     nextGradeCode: () => nextCode('salary_grades', 'GR'),
+    // الدرجة: الخطوات تُدخل يدوياً (g.steps) أو تُولَّد من الحدين وعدد الخطوات (الافتراضي 8)
     saveGrade(g) {
       need(canHr(this.currentUser()), NO_HR);
-      const id = g.id || null, name = trim(g.name), min = Number(g.min), max = Number(g.max), inc = trim(g.increment) === '' ? 0 : Number(g.increment);
-      need(name.length >= 2, 'أدخل اسم الدرجة');
-      need(trim(g.min) !== '' && Number.isFinite(min) && min >= 0, 'أدخل الحد الأدنى للراتب');
-      need(trim(g.max) !== '' && Number.isFinite(max) && max >= min, 'الحد الأعلى يجب ألا يقل عن الحد الأدنى');
-      need(Number.isFinite(inc) && inc >= 0, 'العلاوة السنوية يجب أن تكون رقماً موجباً');
+      const id = g.id || null, name = trim(g.name), count = trim(g.stepCount) === '' ? 8 : Number(g.stepCount);
+      need(name.length >= 1, 'أدخل الدرجة');
+      need(Number.isInteger(count) && count >= 1 && count <= 20, 'عدد الخطوات بين 1 و 20');
+      let steps;
+      if (Array.isArray(g.steps) && g.steps.length) {
+        steps = g.steps.map(Number);
+        need(steps.every(x => Number.isFinite(x) && x >= 0), 'مبالغ الخطوات يجب أن تكون أرقاماً موجبة');
+        need(steps.every((x, i) => !i || x >= steps[i - 1]), 'مبالغ الخطوات يجب ألا تتناقص');
+      } else {
+        const lo = Number(g.min), hi = Number(g.max);
+        need(trim(g.min) !== '' && Number.isFinite(lo) && lo >= 0, 'أدخل الحد الأدنى للراتب');
+        need(trim(g.max) !== '' && Number.isFinite(hi) && hi >= lo, 'الحد الأعلى يجب ألا يقل عن الحد الأدنى');
+        steps = genSteps(lo, hi, count);
+      }
+      steps = steps.map(round2);
+      const min = steps[0], max = steps[steps.length - 1], inc = steps.length > 1 ? round2((max - min) / (steps.length - 1)) : 0;
+      const year = trim(g.scaleYear) === '' ? null : Number(g.scaleYear);
+      need(year === null || (Number.isInteger(year) && year >= 1990 && year <= 2100), 'السنة غير صحيحة');
+      const currency = trim(g.currency) || cfg.currency;
+      need(CURRENCIES[currency], 'اختر عملة صحيحة');
+      const type = trim(g.scaleType), edition = trim(g.edition), level = trim(g.level);
       const code = trim(g.code) || this.nextGradeCode();
       const dup = all('SELECT id FROM salary_grades WHERE code = ?', [code])[0];
       need(!dup || dup.id === id, 'رمز الدرجة مستخدم مسبقاً');
-      if (id) run('UPDATE salary_grades SET code=?, name=?, min_salary=?, max_salary=?, increment=?, notes=? WHERE id=?', [code, name, min, max, inc, trim(g.notes), id]);
-      else run('INSERT INTO salary_grades (id, code, name, min_salary, max_salary, increment, notes) VALUES (?,?,?,?,?,?,?)', [uid(), code, name, min, max, inc, trim(g.notes)]);
+      const dupScale = all('SELECT id FROM salary_grades WHERE COALESCE(scale_type,\'\') = ? AND COALESCE(scale_year,0) = ? AND COALESCE(edition,\'\') = ? AND name = ? AND COALESCE(level,\'\') = ?', [type, year || 0, edition, name, level])[0];
+      need(!dupScale || dupScale.id === id, 'هذه الدرجة موجودة مسبقاً في نفس السلم (النوع/السنة/الإصدار/المستوى)');
+      const vals = [code, name, min, max, inc, trim(g.notes), type, year, edition, trim(g.description), level, currency, JSON.stringify(steps)];
+      if (id) run('UPDATE salary_grades SET code=?, name=?, min_salary=?, max_salary=?, increment=?, notes=?, scale_type=?, scale_year=?, edition=?, description=?, level=?, currency=?, steps=? WHERE id=?', [...vals, id]);
+      else run('INSERT INTO salary_grades (code, name, min_salary, max_salary, increment, notes, scale_type, scale_year, edition, description, level, currency, steps, id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [...vals, uid()]);
       return persist();
     },
     deleteGrade(id) {
@@ -666,7 +698,7 @@ const Store = (() => {
     // نطاق راتب الموظف حسب درجة مسماه الوظيفي (أو null)
     gradeRange(employeeId) {
       need(canHr(this.currentUser()), NO_HR);
-      return all(`SELECT g.code, g.name, g.min_salary AS min, g.max_salary AS max FROM employees e
+      return all(`SELECT g.id, g.code, g.name, g.min_salary AS min, g.max_salary AS max, g.currency FROM employees e
         JOIN job_titles t ON t.id = e.job_title_id JOIN salary_grades g ON g.id = t.grade_id WHERE e.id = ?`, [employeeId])[0] || null;
     },
 
@@ -876,9 +908,10 @@ const Store = (() => {
       const ensure = (table, name, insert) => { const r = all(`SELECT id FROM ${table} WHERE name = ?`, [name])[0]; if (r) return r.id; const id = D + uid(); insert(id); return id; };
       const grade = {};
       [['المستوى الأول', 2500, 3500, 100], ['المستوى الثاني', 3500, 5000, 150], ['المستوى الثالث', 5000, 7500, 250], ['المستوى الرابع', 7500, 10500, 300], ['المستوى الخامس', 10500, 15000, 450]].forEach(([name, min, max, inc], i) => {
-        grade[i + 1] = ensure('salary_grades', name, id => run('INSERT INTO salary_grades (id, code, name, min_salary, max_salary, increment, notes) VALUES (?,?,?,?,?,?,?)', [id, nextCode('salary_grades', 'GR'), name, min, max, inc, 'درجة تجريبية']));
+        grade[i + 1] = ensure('salary_grades', name, id => run('INSERT INTO salary_grades (id, code, name, min_salary, max_salary, increment, notes, scale_type, scale_year, edition, description, level, currency, steps) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [id, nextCode('salary_grades', 'GR'), name, min, max, round2((max - min) / 7), 'درجة تجريبية', 'سلم الرواتب الموحد', new Date().getFullYear(), 'الأول', 'سلم تجريبي', String(i + 1), 'ILS', JSON.stringify(genSteps(min, max, 8))]));
       });
-      const gradeRow = i => all('SELECT min_salary AS min, increment AS inc FROM salary_grades WHERE id = ?', [grade[i]])[0];
+      const gradeSteps = i => parseSteps(all('SELECT steps FROM salary_grades WHERE id = ?', [grade[i]])[0].steps);
       const dept = {};
       [['gm', 'الإدارة العامة', null], ['hr', 'الموارد البشرية', 'gm'], ['fin', 'الشؤون المالية', 'gm'], ['it', 'تقنية المعلومات', 'gm'], ['prj', 'المشاريع', 'gm'], ['ops', 'العمليات والخدمات', 'gm']].forEach(([k, name, parent]) => {
         dept[k] = ensure('departments', name, id => run('INSERT INTO departments (id, code, name, parent_id, manager_id, notes) VALUES (?,?,?,?,NULL,?)', [id, nextCode('departments', 'DEP'), name, parent ? dept[parent] : null, 'قسم تجريبي']));
@@ -968,7 +1001,7 @@ const Store = (() => {
         ctCount++;
         const c = { type: 'دائم', payBasis: 'monthly', end: null, allow: 0, status: 'active', step: null, grade: null, ...o };
         let basic = c.basic;
-        if (c.grade) { const g = gradeRow(c.grade); basic = g.min + (c.step - 1) * g.inc; }
+        if (c.grade) basic = gradeSteps(c.grade)[c.step - 1];
         run(`INSERT INTO contracts (${ctCols}) VALUES (${'?,'.repeat(24)}?)`, [D + 'ct_' + ++ctSeq, `CNT-${String(ctSeq).padStart(4, '0')}`, emp[k].id, c.type, c.payBasis, c.start, c.end, c.payBasis === 'volunteer' ? 0 : basic, c.payBasis === 'volunteer' ? 0 : c.allow,
           E.find(e => e[0] === k)[7], c.status, 'عقد تجريبي', c.start, c.grade ? grade[c.grade] : null, c.grade ? c.step : null, 'ILS', c.code || '', c.project || '', c.projectEn || '',
           c.sup ? emp[c.sup].id : null, c.desc || '', c.descEn || '', c.incl || '', iso, iso]);

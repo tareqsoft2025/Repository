@@ -382,3 +382,9 @@ details[open] > summary .caret { transform: rotate(180deg); }
   .card-head .field input { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* سلم الرواتب */
+.step-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 260px; }
+.step-chips .chip { direction: ltr; font-variant-numeric: tabular-nums; }
+.steps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; }
+.steps-grid:empty::after { content: 'اضغط «توليد الخطوات» أو أضف الحدين ثم احفظ'; color: var(--text-muted); font-size: var(--text-sm); }
