@@ -1,0 +1,4 @@
+# Local production credentials must never be committed
+config.php
+data/
+*.sql.gz

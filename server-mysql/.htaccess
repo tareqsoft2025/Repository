@@ -1,0 +1,12 @@
+# Route /api/* to the PHP API and pass Authorization header.
+Options -Indexes
+RewriteEngine On
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^api/(.*)$ index.php?route=$1 [QSA,L]
+
+<Files "config.php">
+  Require all denied
+  Deny from all
+</Files>
