@@ -8,7 +8,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const PORT = Number(process.env.PORT || 8080);
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+// لا تُحفظ البيانات داخل مجلد منشور على الويب (public_html) أبداً: تُوضع بجوارها في مجلد المستخدم
+const DATA_DIR = process.env.DATA_DIR || (/public_html|www|htdocs/.test(__dirname) ? path.join(__dirname.split(/public_html|www|htdocs/)[0], 'hr-data') : path.join(__dirname, 'data'));
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // ---------- التخزين: سجل أحداث (JSON lines) يُلحَق به، وفهرس في الذاكرة. بلا أي اعتمادية وعلى أي إصدار Node حديث ----------
