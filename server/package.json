@@ -5,5 +5,5 @@
   "description": "خادم المزامنة المركزي لنظام شؤون الموظفين وتطبيق بصمة",
   "main": "server.js",
   "scripts": { "start": "node server.js" },
-  "engines": { "node": ">=22.5" }
+  "engines": { "node": ">=16" }
 }

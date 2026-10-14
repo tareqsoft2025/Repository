@@ -1,28 +1,58 @@
 // خادم المزامنة المركزي لنظام شؤون الموظفين: قاعدة بيانات واحدة للنظام وتطبيق الحضور.
-// بلا اعتماديات خارجية: Node 22+ (node:sqlite). التشغيل: node server.js
+// بلا اعتماديات خارجية وعلى أي Node 16+ (التخزين ملف سجل في DATA_DIR). التشغيل: node server.js
 // المتغيرات: PORT، DATA_DIR (مسار حفظ القاعدة)، SETUP_KEY (مفتاح التهيئة الأولى، يُولَّد ويُطبع إن لم يُحدَّد)
 'use strict';
 const http = require('node:http');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const fs = require('node:fs');
-const { DatabaseSync } = require('node:sqlite');
 
 const PORT = Number(process.env.PORT || 8080);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
-const db = new DatabaseSync(path.join(DATA_DIR, 'hr.sqlite'));
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  CREATE TABLE IF NOT EXISTS rows (tbl TEXT NOT NULL, id TEXT NOT NULL, data TEXT, deleted INTEGER NOT NULL DEFAULT 0, seq INTEGER NOT NULL, PRIMARY KEY (tbl, id));
-  CREATE INDEX IF NOT EXISTS idx_rows_seq ON rows(seq);
-  CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL);
-  CREATE TABLE IF NOT EXISTS punches (client_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, result TEXT NOT NULL, created INTEGER NOT NULL);`);
 
+// ---------- التخزين: سجل أحداث (JSON lines) يُلحَق به، وفهرس في الذاكرة. بلا أي اعتمادية وعلى أي إصدار Node حديث ----------
+const LOG = path.join(DATA_DIR, 'hr.log');
 const TABLES = ['users', 'records', 'settings', 'employees', 'contracts', 'qualifications', 'courses', 'experiences', 'documents', 'salary_grades', 'leave_requests', 'job_titles', 'departments'];
-const meta = k => db.prepare('SELECT value FROM meta WHERE key = ?').get(k)?.value;
-const setMeta = (k, v) => db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run(k, String(v));
+const rowsBy = Object.fromEntries(TABLES.map(t => [t, new Map()]));   // tbl -> id -> { data, deleted, seq }
+let bySeq = [];                                                       // [{tbl,id,seq}] بترتيب seq (قد يحوي قديماً)
+const metaMap = new Map(), sessions = new Map(), punches = new Map();
+let journal = [], undo = null, logLines = 0;
+
+function applyLine(o, record) {
+  switch (o.k) {
+    case 'row': { const prev = rowsBy[o.tbl].get(o.id); rowsBy[o.tbl].set(o.id, { data: o.data || null, deleted: !!o.deleted, seq: o.seq }); bySeq.push({ tbl: o.tbl, id: o.id, seq: o.seq });
+      if (undo) undo.push(() => { if (prev) rowsBy[o.tbl].set(o.id, prev); else rowsBy[o.tbl].delete(o.id); bySeq.pop(); }); break; }
+    case 'meta': { const prev = metaMap.get(o.key); metaMap.set(o.key, o.value); if (undo) undo.push(() => (prev === undefined ? metaMap.delete(o.key) : metaMap.set(o.key, prev))); break; }
+    case 'sess': sessions.set(o.hash, { user_id: o.user_id, expires: o.expires }); break;
+    case 'sessdel': sessions.delete(o.hash); break;
+    case 'punch': punches.set(o.client_id, { result: o.result, created: o.created }); break;
+    case 'punchdel': punches.delete(o.client_id); break;
+  }
+  if (record) journal.push(JSON.stringify(o));
+}
+// يكتب ما تراكم دفعة واحدة (ذرّياً قدر الإمكان)
+function flush() { if (!journal.length) return; fs.appendFileSync(LOG, journal.join('\n') + '\n'); logLines += journal.length; journal = []; }
+function load() {
+  if (!fs.existsSync(LOG)) return;
+  for (const line of fs.readFileSync(LOG, 'utf8').split('\n')) { if (!line) continue; try { applyLine(JSON.parse(line), false); logLines++; } catch { /* سطر ناقص من انقطاع مفاجئ */ } }
+  const live = Object.values(rowsBy).reduce((n, m) => n + m.size, 0) + metaMap.size + sessions.size + punches.size;
+  if (logLines > live * 3 + 2000) compact();
+}
+function compact() { // إعادة كتابة السجل بالحالة الحالية فقط
+  const out = [];
+  for (const [k, v] of metaMap) out.push({ k: 'meta', key: k, value: v });
+  for (const t of TABLES) for (const [id, r] of rowsBy[t]) out.push({ k: 'row', tbl: t, id, data: r.data, deleted: r.deleted, seq: r.seq });
+  for (const [hash, s] of sessions) out.push({ k: 'sess', hash, ...s });
+  for (const [client_id, p] of punches) out.push({ k: 'punch', client_id, ...p });
+  fs.writeFileSync(LOG + '.tmp', out.map(o => JSON.stringify(o)).join('\n') + '\n'); fs.renameSync(LOG + '.tmp', LOG);
+  logLines = out.length;
+  bySeq = []; for (const t of TABLES) for (const [id, r] of rowsBy[t]) bySeq.push({ tbl: t, id, seq: r.seq }); bySeq.sort((a, b) => a.seq - b.seq);
+}
+load();
+bySeq.sort((a, b) => a.seq - b.seq);
+const meta = k => metaMap.get(k);
+const setMeta = (k, v) => { applyLine({ k: 'meta', key: k, value: String(v) }, true); flush(); };
 if (!meta('serverId')) setMeta('serverId', crypto.randomUUID());
 if (!meta('seq')) setMeta('seq', 0);
 const SERVER_ID = meta('serverId');
@@ -30,14 +60,15 @@ const SETUP_KEY = process.env.SETUP_KEY || meta('setupKey') || (() => { const k 
 console.log(`مفتاح التهيئة الأولى: ${SETUP_KEY}`);
 
 // ---------- تخزين الصفوف ----------
-const nextSeq = () => { const n = Number(meta('seq')) + 1; setMeta('seq', n); return n; };
-const getRow = (tbl, id) => { const r = db.prepare('SELECT data, deleted FROM rows WHERE tbl = ? AND id = ?').get(tbl, id); return r && !r.deleted ? JSON.parse(r.data) : null; };
-const putRow = (tbl, id, data) => db.prepare('INSERT OR REPLACE INTO rows (tbl, id, data, deleted, seq) VALUES (?,?,?,0,?)').run(tbl, id, JSON.stringify(data), nextSeq());
-const delRow = (tbl, id) => db.prepare('INSERT OR REPLACE INTO rows (tbl, id, data, deleted, seq) VALUES (?,?,NULL,1,?)').run(tbl, id, nextSeq());
-const allRows = tbl => db.prepare('SELECT data FROM rows WHERE tbl = ? AND deleted = 0').all(tbl).map(r => JSON.parse(r.data));
-const tx = fn => { db.exec('BEGIN'); try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } };
-const userCount = () => db.prepare("SELECT COUNT(*) AS n FROM rows WHERE tbl = 'users' AND deleted = 0").get().n;
+const nextSeq = () => { const n = Number(meta('seq')) + 1; applyLine({ k: 'meta', key: 'seq', value: String(n) }, true); return n; };
+const getRow = (tbl, id) => { const r = rowsBy[tbl].get(id); return r && !r.deleted ? JSON.parse(r.data) : null; };
+const putRow = (tbl, id, data) => applyLine({ k: 'row', tbl, id, data: JSON.stringify(data), deleted: false, seq: nextSeq() }, true);
+const delRow = (tbl, id) => applyLine({ k: 'row', tbl, id, data: null, deleted: true, seq: nextSeq() }, true);
+const allRows = tbl => { const out = []; for (const r of rowsBy[tbl].values()) if (!r.deleted) out.push(JSON.parse(r.data)); return out; };
+// معاملة: عند الخطأ تُتراجع تغييرات الذاكرة ولا يُكتب شيء
+const tx = fn => { undo = []; const j = journal.length; try { const r = fn(); undo = null; flush(); return r; } catch (e) { undo.reverse().forEach(f => f()); journal.length = j; undo = null; throw e; } };
 const findUserByName = name => allRows('users').find(u => String(u.username).toLowerCase() === String(name).toLowerCase());
+const userCount = () => { let n = 0; for (const r of rowsBy.users.values()) if (!r.deleted) n++; return n; };
 
 // ---------- كلمات المرور (متوافقة مع المتصفح: pbkdf2$iter$salt$hash) ----------
 function verifyPw(pw, stored) {
@@ -51,7 +82,7 @@ const hashPw = pw => { const salt = crypto.randomBytes(16); return `pbkdf2$10000
 
 // ---------- الجلسات والحدّ من المحاولات ----------
 const sha = t => crypto.createHash('sha256').update(t).digest('hex');
-const newSession = userId => { const t = crypto.randomBytes(32).toString('base64url'); db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(sha(t), userId, Date.now() + 30 * 86400e3); return t; };
+const newSession = userId => { const t = crypto.randomBytes(32).toString('base64url'); applyLine({ k: 'sess', hash: sha(t), user_id: userId, expires: Date.now() + 30 * 86400e3 }, true); if (!undo) flush(); return t; };
 const fails = new Map();
 const throttled = key => { const f = fails.get(key); return f && f.n >= 8 && Date.now() - f.t < 10 * 60e3; };
 const noteFail = key => { const f = fails.get(key); fails.set(key, { n: (f && Date.now() - f.t < 10 * 60e3 ? f.n : 0) + 1, t: Date.now() }); };
@@ -62,7 +93,7 @@ const bad = (code, msg) => { throw new HttpError(code, msg); };
 function actorOf(req) {
   const t = (req.headers.authorization || '').replace(/^Bearer /, '');
   if (!t) bad(401, 'يلزم تسجيل الدخول');
-  const s = db.prepare('SELECT user_id, expires FROM sessions WHERE hash = ?').get(sha(t));
+  const s = sessions.get(sha(t));
   if (!s || s.expires < Date.now()) bad(401, 'انتهت الجلسة. سجّل الدخول من جديد');
   const u = getRow('users', s.user_id);
   if (!u || !u.active) bad(401, 'الحساب غير فعّال');
@@ -135,17 +166,16 @@ route('GET', '/api/sync/pull', (req, body, ip, url) => {
   const u = actorOf(req), since = Number(url.searchParams.get('since') || 0), limit = 400;
   const ownEmp = ownEmployeeId(u), out = [];
   let cursor = since, more = false;
-  const stmt = db.prepare('SELECT tbl, id, data, deleted, seq FROM rows WHERE seq > ? ORDER BY seq LIMIT ?');
-  for (;;) {
-    const batch = stmt.all(cursor, limit);
-    for (const r of batch) {
-      cursor = r.seq;
-      if (r.deleted) { if (isHr(u) || ['users', 'records', 'employees', 'contracts', 'leave_requests', 'settings'].includes(r.tbl)) out.push({ tbl: r.tbl, id: r.id, deleted: true }); continue; }
-      const d = readFilter(u, r.tbl, JSON.parse(r.data), ownEmp);
-      if (d) out.push({ tbl: r.tbl, id: r.id, data: d });
-    }
-    if (batch.length < limit) break;
+  let lo = 0, hi = bySeq.length; // أول إدخال seq > since
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (bySeq[mid].seq <= since) lo = mid + 1; else hi = mid; }
+  for (let i = lo; i < bySeq.length; i++) {
+    const e = bySeq[i], r = rowsBy[e.tbl].get(e.id);
+    if (!r || r.seq !== e.seq) continue; // إدخال قديم لصف عُدّل لاحقاً
     if (out.length >= limit) { more = true; break; }
+    cursor = e.seq;
+    if (r.deleted) { if (isHr(u) || ['users', 'records', 'employees', 'contracts', 'leave_requests', 'settings'].includes(e.tbl)) out.push({ tbl: e.tbl, id: e.id, deleted: true }); continue; }
+    const d = readFilter(u, e.tbl, JSON.parse(r.data), ownEmp);
+    if (d) out.push({ tbl: e.tbl, id: e.id, data: d });
   }
   return { rows: out, cursor, more, serverId: SERVER_ID, user: publicUser(u) };
 });
@@ -202,7 +232,7 @@ route('POST', '/api/m/punch', (req, body) => {
   if (u.must_change) bad(403, 'غيّر كلمة المرور المؤقتة أولاً');
   const { clientId, type, at, date } = body;
   if (!clientId || !['in', 'out'].includes(type)) bad(400, 'طلب غير صحيح');
-  const prev = db.prepare('SELECT result FROM punches WHERE client_id = ?').get(String(clientId));
+  const prev = punches.get(String(clientId));
   if (prev) return JSON.parse(prev.result); // إعادة إرسال: نتيجة سابقة دون تكرار
   const when = new Date(at);
   if (isNaN(when) || !dateOk(date)) bad(400, 'وقت التسجيل غير صحيح');
@@ -212,7 +242,7 @@ route('POST', '/api/m/punch', (req, body) => {
   const lat = body.lat == null ? null : Number(body.lat), lng = body.lng == null ? null : Number(body.lng), acc = body.acc == null ? null : Math.round(Number(body.acc));
   if (lat === null || lng === null || !(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180)) bad(400, 'الموقع مطلوب للتسجيل');
   const emp = allRows('employees').find(e => e.user_id === u.id) || null, el = eligibility(u, emp, date);
-  const done = r => { const res = { ok: true, record: recOut(r), receivedAt: new Date().toISOString() }; db.prepare('INSERT INTO punches VALUES (?,?,?,?)').run(String(clientId), u.id, JSON.stringify(res), Date.now()); return res; };
+  const done = r => { const res = { ok: true, record: recOut(r), receivedAt: new Date().toISOString() }; applyLine({ k: 'punch', client_id: String(clientId), result: JSON.stringify(res), created: Date.now() }, true); return res; };
   return tx(() => {
     if (!el.ok) bad(422, `لا يمكن التسجيل: ${el.reason}`);
     const rec = recFor(u.id, date);
@@ -243,7 +273,9 @@ const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const send = (res, code, obj) => { const b = JSON.stringify(obj); res.writeHead(code, { ...CORS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(b); };
 const server = http.createServer((req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
-  const url = new URL(req.url, 'http://x'), fn = routes[req.method + ' ' + url.pathname];
+  const url = new URL(req.url, 'http://x');
+  if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '')) { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('HR sync server OK'); }
+  const fn = routes[req.method + ' ' + url.pathname];
   if (!fn) return send(res, 404, { error: 'غير موجود' });
   const chunks = []; let size = 0;
   req.on('data', c => { size += c.length; if (size > 120e6) { req.destroy(); } else chunks.push(c); });
@@ -251,13 +283,15 @@ const server = http.createServer((req, res) => {
     try {
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
       const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-      send(res, 200, await fn(req, body, ip, url));
+      const out = await fn(req, body, ip, url); flush();
+      send(res, 200, out);
     } catch (e) {
+      flush();
       if (e instanceof HttpError) return send(res, e.code, { error: e.message });
       console.error(e); send(res, 500, { error: 'خطأ في الخادم' });
     }
   });
 });
-setInterval(() => { db.prepare('DELETE FROM sessions WHERE expires < ?').run(Date.now()); db.prepare('DELETE FROM punches WHERE created < ?').run(Date.now() - 30 * 86400e3); }, 3600e3).unref();
-if (require.main === module) server.listen(PORT, () => console.log(`خادم المزامنة يعمل على المنفذ ${PORT}`));
-module.exports = { server, db };
+setInterval(() => { for (const [h, v] of sessions) if (v.expires < Date.now()) applyLine({ k: 'sessdel', hash: h }, true); for (const [c, p] of punches) if (p.created < Date.now() - 30 * 86400e3) applyLine({ k: 'punchdel', client_id: c }, true); flush(); }, 3600e3).unref();
+server.listen(PORT, () => console.log(`خادم المزامنة يعمل على المنفذ ${PORT}`)); // يعمل أيضاً تحت Passenger/cPanel
+module.exports = { server };
