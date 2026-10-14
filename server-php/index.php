@@ -19,8 +19,10 @@ function bad($code, $msg) { out($code, ['error' => $msg]); }
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { http_response_code(204); exit; }
 
 // ---------- المسار ----------
-$path = $_GET['route'] ?? '';
-if ($path === '') { $p = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH); $i = strpos($p, '/api/'); $path = $i !== false ? substr($p, $i + 5) : ''; }
+$path = isset($_GET['route']) ? (string)$_GET['route'] : '';
+if ($path === '') { $p = (string)parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH); $i = strpos($p, '/api/'); $path = $i !== false ? substr($p, $i + 5) : ''; }
+if ($path === '' && !empty($_SERVER['PATH_INFO'])) { $i = strpos($_SERVER['PATH_INFO'], '/api/'); $path = $i !== false ? substr($_SERVER['PATH_INFO'], $i + 5) : ''; }
+$path = preg_replace('#^(index\.php/)?(api/)?#', '', trim($path, '/'));
 $path = '/api/' . trim($path, '/');
 if ($path === '/api/') { header('Content-Type: text/plain; charset=utf-8'); echo 'HR sync server OK'; exit; }
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -260,4 +262,4 @@ if ($path === '/api/m/password' && $method === 'POST') {
   out(200, ['ok' => true]);
 }
 
-bad(404, 'غير موجود');
+out(404, ['error' => 'غير موجود', 'debug' => ['path' => $path, 'method' => $method, 'uri' => $_SERVER['REQUEST_URI'] ?? '', 'route' => $_GET['route'] ?? null, 'version' => 'php-2']]);
