@@ -42,7 +42,7 @@ try {
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     PDO::ATTR_EMULATE_PREPARES => false
   ]);
-  $db->exec("CREATE TABLE IF NOT EXISTS rows (
+  $db->exec("CREATE TABLE IF NOT EXISTS `rows` (
     tbl VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     id VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     data LONGTEXT NULL, deleted TINYINT(1) NOT NULL DEFAULT 0, seq BIGINT NOT NULL,
@@ -79,11 +79,11 @@ if (meta('serverId') === null) { setMeta('serverId', bin2hex(random_bytes(16)));
 $SERVER_ID = meta('serverId');
 function jenc($v) { return json_encode($v, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION); }
 function nextSeq() { $n = (int)meta('seq') + 1; setMeta('seq', $n); return $n; }
-function getRow($tbl, $id) { $r = q('SELECT data, deleted FROM rows WHERE tbl = ? AND id = ?', [$tbl, $id])->fetch(); return ($r && !$r['deleted']) ? json_decode($r['data'], true) : null; }
-function putRow($tbl, $id, $data) { q('INSERT INTO rows (tbl, id, data, deleted, seq) VALUES (?,?,?,0,?) ON DUPLICATE KEY UPDATE data = VALUES(data), deleted = 0, seq = VALUES(seq)', [$tbl, $id, jenc($data), nextSeq()]); }
-function delRow($tbl, $id) { q('INSERT INTO rows (tbl, id, data, deleted, seq) VALUES (?,?,NULL,1,?) ON DUPLICATE KEY UPDATE data = NULL, deleted = 1, seq = VALUES(seq)', [$tbl, $id, nextSeq()]); }
-function allRows($tbl) { $o = []; foreach (q('SELECT data FROM rows WHERE tbl = ? AND deleted = 0', [$tbl]) as $r) $o[] = json_decode($r['data'], true); return $o; }
-function userCount() { return (int)q("SELECT COUNT(*) AS n FROM rows WHERE tbl = 'users' AND deleted = 0")->fetch()['n']; }
+function getRow($tbl, $id) { $r = q('SELECT data, deleted FROM `rows` WHERE tbl = ? AND id = ?', [$tbl, $id])->fetch(); return ($r && !$r['deleted']) ? json_decode($r['data'], true) : null; }
+function putRow($tbl, $id, $data) { q('INSERT INTO `rows` (tbl, id, data, deleted, seq) VALUES (?,?,?,0,?) ON DUPLICATE KEY UPDATE data = VALUES(data), deleted = 0, seq = VALUES(seq)', [$tbl, $id, jenc($data), nextSeq()]); }
+function delRow($tbl, $id) { q('INSERT INTO `rows` (tbl, id, data, deleted, seq) VALUES (?,?,NULL,1,?) ON DUPLICATE KEY UPDATE data = NULL, deleted = 1, seq = VALUES(seq)', [$tbl, $id, nextSeq()]); }
+function allRows($tbl) { $o = []; foreach (q('SELECT data FROM `rows` WHERE tbl = ? AND deleted = 0', [$tbl]) as $r) $o[] = json_decode($r['data'], true); return $o; }
+function userCount() { return (int)q("SELECT COUNT(*) AS n FROM `rows` WHERE tbl = 'users' AND deleted = 0")->fetch()['n']; }
 function tx($fn) { global $db; $db->beginTransaction(); try { $r = $fn(); $db->commit(); return $r; } catch (Throwable $e) { if ($db->inTransaction()) $db->rollBack(); throw $e; } }
 
 // ---------- كلمات المرور (متوافقة مع المتصفح: pbkdf2$iter$salt$hash) ----------
@@ -179,7 +179,7 @@ if ($path === '/api/bootstrap' && $method === 'POST') {
 if ($path === '/api/sync/pull' && $method === 'GET') {
   $u = actorOf(); $since = (int)($_GET['since'] ?? 0); $limit = 400; $ownEmp = ownEmployeeId($u);
   $out = []; $cursor = $since; $more = false;
-  $st = q('SELECT tbl, id, data, deleted, seq FROM rows WHERE seq > ? ORDER BY seq', [$since]);
+  $st = q('SELECT tbl, id, data, deleted, seq FROM `rows` WHERE seq > ? ORDER BY seq', [$since]);
   while ($r = $st->fetch()) {
     if (count($out) >= $limit) { $more = true; break; }
     $cursor = (int)$r['seq'];
