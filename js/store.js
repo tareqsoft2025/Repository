@@ -189,6 +189,7 @@ const Store = (() => {
     backfillCatalogs();
     cfg = { ...DEFAULTS };
     all('SELECT key, value FROM settings').forEach(r => { if (r.key in DEFAULTS) cfg[r.key] = r.value; });
+    ensureSyncTriggers();
   }
 
   function all(sql, params = []) {
@@ -199,7 +200,127 @@ const Store = (() => {
   const run = (sql, params = []) => db.run(sql, params);
   // الحفظ بعد كل كتابة (قاعدة صغيرة، فالتصدير سريع)
   let saving = Promise.resolve();
-  const persist = () => (saving = saving.then(() => idbPut(db.export())).catch(e => console.error('تعذر حفظ القاعدة', e)));
+  const persist = () => { const p = (saving = saving.then(() => idbPut(db.export())).catch(e => console.error('تعذر حفظ القاعدة', e))); scheduleSync(); return p; };
+
+  // ---------- المزامنة مع الخادم المركزي (قاعدة واحدة لكل الأجهزة وتطبيق الحضور) ----------
+  // كل تعديل محلي يُسجَّل بمشغّلات SQL في _dirty ثم يُرسل للخادم، وتُجلب تعديلات الآخرين بمؤشر تسلسلي (seq).
+  const SYNC_TABLES = ['users', 'records', 'settings', 'employees', 'contracts', 'qualifications', 'courses', 'experiences', 'documents', 'salary_grades', 'leave_requests', 'job_titles', 'departments'];
+  const SYNC_KEY = 'att_sync';
+  const syncState = () => { try { return JSON.parse(localStorage.getItem(SYNC_KEY)) || {}; } catch { return {}; } };
+  const saveSyncState = patch => { const n = { ...syncState(), ...patch }; localStorage.setItem(SYNC_KEY, JSON.stringify(n)); return n; };
+  const serverUrl = () => (localStorage.getItem('att_server_url') || window.HR_SERVER || '').trim().replace(/\/+$/, '');
+  const pk = t => (t === 'settings' ? 'key' : 'id');
+  function ensureSyncTriggers() {
+    db.exec('CREATE TABLE IF NOT EXISTS _dirty (tbl TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (tbl, id)); CREATE TABLE IF NOT EXISTS _sync (applying INTEGER NOT NULL); INSERT INTO _sync SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM _sync);');
+    for (const t of SYNC_TABLES) {
+      const k = pk(t), w = 'WHEN (SELECT applying FROM _sync) = 0';
+      db.exec(`CREATE TRIGGER IF NOT EXISTS trg_${t}_i AFTER INSERT ON ${t} ${w} BEGIN INSERT OR REPLACE INTO _dirty VALUES ('${t}', NEW.${k}); END;
+        CREATE TRIGGER IF NOT EXISTS trg_${t}_u AFTER UPDATE ON ${t} ${w} BEGIN INSERT OR REPLACE INTO _dirty VALUES ('${t}', NEW.${k}); END;
+        CREATE TRIGGER IF NOT EXISTS trg_${t}_d AFTER DELETE ON ${t} ${w} BEGIN INSERT OR REPLACE INTO _dirty VALUES ('${t}', OLD.${k}); END;`);
+    }
+  }
+  const encRow = r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v instanceof Uint8Array ? { $b64: b64(v) } : v]));
+  const decVal = v => (v && typeof v === 'object' && '$b64' in v ? unb64(v.$b64) : v);
+  const colCache = {};
+  const cols = t => colCache[t] || (colCache[t] = all(`PRAGMA table_info(${t})`).map(c => c.name));
+  async function api_(method, path, body, token) {
+    const url = serverUrl(); if (!url) throw new Error('لم يُضبط عنوان الخادم');
+    let res;
+    try { res = await fetch(url + path, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: body ? JSON.stringify(body) : undefined }); }
+    catch { const e = new Error('تعذر الاتصال بالخادم المركزي'); e.offline = true; throw e; }
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { const e = new Error(j.error || 'خطأ من الخادم'); e.status = res.status; throw e; }
+    return j;
+  }
+  function applyRows(rows) {
+    const dirty = new Set(all('SELECT tbl, id FROM _dirty').map(r => r.tbl + '\u0000' + r.id));
+    db.exec('UPDATE _sync SET applying = 1');
+    try {
+      for (const r of rows) {
+        if (!SYNC_TABLES.includes(r.tbl) || dirty.has(r.tbl + '\u0000' + r.id)) continue; // تعديل محلي معلّق له الأولوية حتى يُرسل
+        if (r.deleted) { run(`DELETE FROM ${r.tbl} WHERE ${pk(r.tbl)} = ?`, [r.id]); continue; }
+        const have = cols(r.tbl), ks = Object.keys(r.data).filter(k => have.includes(k));
+        run(`INSERT OR REPLACE INTO ${r.tbl} (${ks.join(',')}) VALUES (${ks.map(() => '?').join(',')})`, ks.map(k => decVal(r.data[k])));
+      }
+    } finally { db.exec('UPDATE _sync SET applying = 0'); }
+  }
+  let syncing = null, syncTimer = null, syncMsg = '';
+  const emit = () => { try { window.dispatchEvent(new CustomEvent('store-sync')); } catch {} };
+  async function pullAll(full) {
+    let st = syncState(), changed = 0;
+    for (let guard = 0; guard < 500; guard++) {
+      const j = await api_('GET', `/api/sync/pull?since=${full ? 0 : st.cursor || 0}`, null, st.token);
+      if (st.serverId && j.serverId !== st.serverId && !full) { saveSyncState({ serverReset: true }); throw new Error('الخادم أُعيدت تهيئته. اربط الجهاز من جديد'); }
+      applyRows(j.rows); changed += j.rows.length;
+      st = saveSyncState({ cursor: j.cursor, serverId: j.serverId }); full = false;
+      if (!j.more) break;
+    }
+    if (changed) { ensureSchemaCfg(); await persistNoSync(); }
+    return changed;
+  }
+  const persistNoSync = () => (saving = saving.then(() => idbPut(db.export())).catch(e => console.error('تعذر حفظ القاعدة', e)));
+  function ensureSchemaCfg() { cfg = { ...DEFAULTS }; all('SELECT key, value FROM settings').forEach(r => { if (r.key in DEFAULTS) cfg[r.key] = r.value; }); }
+  function dirtyRows() {
+    return all('SELECT tbl, id FROM _dirty').map(d => {
+      const row = all(`SELECT * FROM ${d.tbl} WHERE ${pk(d.tbl)} = ?`, [d.id])[0];
+      return row ? { tbl: d.tbl, id: d.id, data: encRow(row) } : { tbl: d.tbl, id: d.id, deleted: true };
+    });
+  }
+  async function pushDirty() {
+    const st = syncState(); let sent = 0;
+    for (;;) {
+      const batch = dirtyRows().slice(0, 100); if (!batch.length) break;
+      await api_('POST', '/api/sync/push', { rows: batch }, st.token);
+      batch.forEach(b => run('DELETE FROM _dirty WHERE tbl = ? AND id = ?', [b.tbl, b.id])); sent += batch.length;
+    }
+    if (sent) await persistNoSync();
+    return sent;
+  }
+  // مزامنة كاملة: إرسال ثم جلب. تتجاهل الأجهزة غير المرتبطة.
+  function syncNow() {
+    const st = syncState();
+    if (!serverUrl() || !st.linked || !st.token) return Promise.resolve({ skipped: true });
+    if (syncing) return syncing;
+    syncing = (async () => {
+      try {
+        await pushDirty(); const n = await pullAll(false);
+        saveSyncState({ lastSync: new Date().toISOString(), error: '', needsLogin: false });
+        if (n) emit(); else emit();
+        return { ok: true, pulled: n };
+      } catch (e) {
+        saveSyncState({ error: e.message, needsLogin: e.status === 401 || undefined });
+        emit(); return { error: e.message, offline: !!e.offline };
+      } finally { syncing = null; }
+    })();
+    return syncing;
+  }
+  function scheduleSync() {
+    if (!serverUrl() || !syncState().linked) return;
+    clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 1500);
+  }
+  function wipeLocal() {
+    db.exec('UPDATE _sync SET applying = 1');
+    try { SYNC_TABLES.forEach(t => db.exec(`DELETE FROM ${t}`)); db.exec('DELETE FROM _dirty'); } finally { db.exec('UPDATE _sync SET applying = 0'); }
+  }
+  // ربط جهاز بحساب موجود على الخادم: تُستبدل بيانات الجهاز بنسخة الخادم
+  async function linkFromServer(username, password) {
+    const j = await api_('POST', '/api/login', { username, password });
+    wipeLocal(); localStorage.removeItem('att_session');
+    saveSyncState({ url: serverUrl(), token: j.token, userId: j.user.id, serverId: j.serverId, cursor: 0, linked: true, serverReset: false, error: '' });
+    await pullAll(true); db.exec('DELETE FROM _dirty'); await persistNoSync();
+    ensureSyncTriggers();
+    return j;
+  }
+  // تحديث رمز الجلسة للمستخدم الحالي في الخلفية بعد دخول محلي ناجح
+  async function refreshToken(username, password) {
+    if (!serverUrl() || !syncState().linked) return;
+    try {
+      const j = await api_('POST', '/api/login', { username, password });
+      saveSyncState({ token: j.token, userId: j.user.id, needsLogin: false }); syncNow();
+    } catch (e) { if (e.status === 401) saveSyncState({ needsLogin: true, error: 'كلمة مرورك على الخادم مختلفة' }); }
+  }
+  window.addEventListener('online', () => syncNow());
+  setInterval(() => { if (document.visibilityState !== 'hidden') syncNow(); }, 30000);
 
   async function seed() {
     // ترحيل بيانات النسخة القديمة (localStorage) إن وُجدت، وإلا حسابات تجريبية
@@ -305,7 +426,26 @@ const Store = (() => {
 
     // ---------- المستخدمون ----------
     users: () => all(`${USER} ORDER BY name`),
+    // الدخول: إن كان الخادم مهيّأً ولم يُربط الجهاز بعد وكان بلا بيانات فعلية فالدخول من الخادم، وإلا محلياً مع تحديث الجلسة في الخلفية
     async login(username, password) {
+      const url = serverUrl(), st = syncState();
+      if (url && !st.linked && !this.hasLocalData()) {
+        let h = null; try { h = await api_('GET', '/api/health'); } catch {}
+        if (h && h.initialized) {
+          try { await linkFromServer(username.trim(), password); } catch (e) { if (e.status === 401 || e.status === 403 || e.status === 429) return null; throw e; }
+        }
+      }
+      const u = await this.localLogin(username, password);
+      if (u) refreshToken(username.trim(), password);
+      else if (url && st.linked) { // قد تكون كلمة المرور تغيّرت على جهاز آخر: جرّب الخادم ثم أعد المحاولة
+        try { const j = await api_('POST', '/api/login', { username: username.trim(), password }); saveSyncState({ token: j.token, userId: j.user.id }); await pullAll(false); return await this.localLogin(username, password); }
+        catch (e) { if (!e.offline && e.status !== 401 && e.status !== 403) throw e; }
+      }
+      return u;
+    },
+    // هل في قاعدة الجهاز بيانات فعلية غير الحسابات الأولية؟
+    hasLocalData() { return ['employees', 'contracts', 'records', 'leave_requests'].some(t => all(`SELECT COUNT(*) AS n FROM ${t}`)[0].n > 0) || all('SELECT COUNT(*) AS n FROM users')[0].n > 2; },
+    async localLogin(username, password) {
       const u = all(`${USER.replace('active', 'active, password')} WHERE username = ?`, [username.trim()])[0];
       if (!u) return null;
       const v = await verifyPw(password, u.password);
@@ -316,6 +456,26 @@ const Store = (() => {
       delete u.password; return u;
     },
     logout() { localStorage.removeItem('att_session'); },
+    sync: {
+      get url() { return serverUrl(); },
+      get state() { return { ...syncState(), pending: (() => { try { return all('SELECT COUNT(*) AS n FROM _dirty')[0].n; } catch { return 0; } })() }; },
+      setUrl(u) { const v = String(u || '').trim().replace(/\/+$/, ''); if (v && !/^https:\/\//.test(v) && !/^http:\/\/(localhost|127\.0\.0\.1)/.test(v)) throw new Error('عنوان الخادم يجب أن يبدأ بـ https://'); if (v) localStorage.setItem('att_server_url', v); else localStorage.removeItem('att_server_url'); },
+      now: syncNow,
+      async health() { return api_('GET', '/api/health'); },
+      // رفع بيانات هذا الجهاز إلى خادم فارغ (المدير فقط)
+      async bootstrap(setupKey) {
+        const me = api.currentUser(); need(isAdmin(me), ADMIN_ONLY);
+        need(serverUrl(), 'أدخل عنوان الخادم أولاً');
+        const rows = []; for (const t of SYNC_TABLES) all(`SELECT * FROM ${t}`).forEach(r => rows.push({ tbl: t, id: String(r[pk(t)]), data: encRow(r) }));
+        const j = await api_('POST', '/api/bootstrap', { setupKey: String(setupKey || '').trim(), adminId: me.id, rows });
+        db.exec('DELETE FROM _dirty');
+        saveSyncState({ url: serverUrl(), token: j.token, userId: me.id, serverId: j.serverId, cursor: j.cursor, linked: true, serverReset: false, error: '', lastSync: new Date().toISOString() });
+        await persistNoSync(); return true;
+      },
+      // استبدال بيانات هذا الجهاز بنسخة الخادم (بحساب موجود على الخادم)
+      async replaceFromServer(username, password) { await linkFromServer(username, password); return true; },
+      unlink() { localStorage.removeItem(SYNC_KEY); },
+    },
     currentUser() {
       let id = null; try { id = JSON.parse(localStorage.getItem('att_session')); } catch {}
       return id ? all(`${USER} WHERE id = ? AND active = 1`, [id])[0] || null : null;
