@@ -1,7 +1,7 @@
 // بصمة: تطبيق تسجيل الحضور والانصراف. يعمل دون اتصال: التسجيل يُحفظ مع الموقع في طابور محلي ثم يُرسل للخادم عند توفر الإنترنت.
 'use strict';
 (() => {
-  const VERSION = '2.0';
+  const VERSION = '2.1';
   const $ = id => document.getElementById(id);
   const LS = {
     get(k, d = null) { try { const v = localStorage.getItem('hrm_' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
