@@ -28,6 +28,7 @@ if ($path === '/api/') { header('Content-Type: text/plain; charset=utf-8'); echo
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($SETUP_KEY === '' || strpos($SETUP_KEY, 'CHANGE-ME') === 0) bad(503, 'غيّر HR_SETUP_KEY في ملف config.php أولاً');
+if (mb_strlen($SETUP_KEY) < 16) bad(503, 'مفتاح التهيئة HR_SETUP_KEY ضعيف: استخدم 16 حرفاً عشوائياً على الأقل');
 
 // ---------- قاعدة البيانات (خارج المجلد المنشور قدر الإمكان، وباسم غير قابل للتخمين) ----------
 $dataDir = defined('HR_DATA_DIR') ? HR_DATA_DIR : '';
