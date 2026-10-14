@@ -5,7 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 OUT=build; rm -rf $OUT; mkdir -p $OUT/classes $OUT/gen
 AJ=/usr/lib/android-sdk/platforms/android-23/android.jar
-aapt package -f -m -J $OUT/gen -M AndroidManifest.xml -S res -I $AJ -F $OUT/unsigned.apk
+# واجهة التطبيق تُضمَّن في الحزمة (assets) فيعمل دون اتصال
+mkdir -p $OUT/assets/js; cp -r ../mobile $OUT/assets/mobile; cp ../js/config.js $OUT/assets/js/config.js
+aapt package -f -m -J $OUT/gen -M AndroidManifest.xml -S res -A $OUT/assets -I $AJ -F $OUT/unsigned.apk
 javac --release 8 -encoding UTF-8 -cp $AJ -d $OUT/classes $(find src $OUT/gen -name '*.java') 2>&1 | grep -v "^warning\|^Note\|bootstrap" || true
 java -cp /usr/share/java/com.android.dx.jar com.android.dx.command.Main --dex --min-sdk-version=21 --output=$OUT/classes.dex $OUT/classes
 (cd $OUT && aapt add unsigned.apk classes.dex >/dev/null)

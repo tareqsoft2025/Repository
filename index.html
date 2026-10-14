@@ -329,6 +329,22 @@
                 <div class="success" id="setOk" role="status"><svg class="i"><use href="#i-check"/></svg>تم حفظ الإعدادات</div>
             </section>
 
+            <section class="card" id="syncCard">
+                <div class="card-head"><h3><svg class="i"><use href="#i-database"/></svg>الخادم المركزي والمزامنة</h3></div>
+                <p class="card-note">قاعدة بيانات واحدة يشترك فيها النظام وتطبيق الحضور على كل الأجهزة. يلزم خادم مزامنة (مجلد server في المستودع) على عنوان HTTPS.</p>
+                <div class="form-grid">
+                    <div class="field span2"><label for="syncUrl">عنوان الخادم</label><input id="syncUrl" dir="ltr" placeholder="https://hr-sync.example.com"></div>
+                    <div class="field"><label>&nbsp;</label><button type="button" class="btn secondary" id="syncSaveUrl">حفظ العنوان</button></div>
+                </div>
+                <p class="card-note" id="syncStatus" style="margin-top:12px"></p>
+                <div class="row">
+                    <button class="btn" id="syncBoot"><svg class="i"><use href="#i-upload"/></svg>رفع بيانات هذا الجهاز إلى الخادم</button>
+                    <button class="btn secondary" id="syncNow"><svg class="i"><use href="#i-check"/></svg>مزامنة الآن</button>
+                    <button class="btn secondary" id="syncReplace"><svg class="i"><use href="#i-download"/></svg>استبدال بيانات الجهاز بنسخة الخادم</button>
+                </div>
+                <div class="alert" id="syncMsg" role="alert" style="margin:16px 0 0"><svg class="i"><use href="#i-alert"/></svg><span id="syncMsgText"></span></div>
+            </section>
+
             <section class="card">
                 <div class="card-head"><h3><svg class="i"><use href="#i-users"/></svg>البيانات التجريبية</h3></div>
                 <p class="card-note" id="demoStatus"></p>
@@ -503,6 +519,21 @@
         <div class="map-legend"><span><i class="dot in"></i>حضور</span><span><i class="dot out"></i>انصراف</span><span id="mapCount"></span></div>
     </dialog>
 
+    <!-- نافذة ربط الخادم -->
+    <dialog id="linkDialog" aria-labelledby="linkTitle">
+        <form method="dialog" id="linkForm" novalidate>
+            <h3 id="linkTitle"></h3>
+            <p class="card-note" id="linkNote"></p>
+            <div class="form-grid">
+                <div class="field span2 lk-key"><label for="lk_key">مفتاح التهيئة (يظهر في سجل الخادم عند تشغيله)</label><input id="lk_key" dir="ltr" autocomplete="off"></div>
+                <div class="field lk-acct"><label for="lk_user">اسم المستخدم على الخادم</label><input id="lk_user" dir="ltr" autocomplete="off"></div>
+                <div class="field lk-acct"><label for="lk_pass">كلمة المرور</label><input type="password" id="lk_pass" dir="ltr" autocomplete="off"></div>
+            </div>
+            <div class="alert" id="linkMsg" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="linkMsgText"></span></div>
+            <div class="dialog-actions"><button type="button" class="btn secondary" id="linkCancel">إلغاء</button><button type="submit" class="btn" id="linkGo">متابعة</button></div>
+        </form>
+    </dialog>
+
     <!-- نافذة رفض طلب -->
     <dialog id="rejectDialog" aria-labelledby="rejectTitle">
         <form method="dialog" id="rejectForm" novalidate>
@@ -649,6 +680,7 @@
         </form>
     </dialog>
 
+    <script src="js/config.js"></script>
     <script src="js/icons.js"></script>
     <script src="js/vendor/sql-wasm.js"></script>
     <script src="js/store.js"></script>

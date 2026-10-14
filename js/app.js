@@ -786,7 +786,26 @@ function renderDemo() {
   const rows = st.loaded ? [{ username: 'ahmed', name: 'أحمد محمد سالم', note: 'موظف (محاسب) — حساب النظام الأصلي', pw: '123456' }, ...st.accounts.filter(a => a.username !== 'ahmed').map(a => ({ username: a.username, name: a.name, note: a.canHr ? 'مسؤول موارد بشرية + تعديل الحضور' : 'موظف', pw: 'demo1234' }))] : [];
   fillRows($('demoAccounts'), rows, (tr, a) => { numCell(tr, a.username); numCell(tr, a.pw); cell(tr, a.name); cell(tr, a.note); }, '', 4);
 }
+function renderSync() {
+  const st = Store.sync.state, url = Store.sync.url;
+  if (document.activeElement !== $('syncUrl')) $('syncUrl').value = url;
+  const when = st.lastSync ? new Date(st.lastSync).toLocaleString('ar-EG') : '—';
+  $('syncStatus').textContent = !url ? 'غير مفعّلة: لا يوجد عنوان خادم. النظام يعمل محلياً على هذا الجهاز فقط.'
+    : !st.linked ? 'عنوان الخادم مضبوط لكن هذا الجهاز غير مرتبط به بعد.'
+    : `مرتبط بالخادم — آخر مزامنة: ${when} — تعديلات بانتظار الإرسال: ${st.pending}${st.error ? ' — ' + st.error : ''}`;
+  $('syncBoot').disabled = !url || !!st.linked || me.role !== 'admin'; $('syncNow').disabled = !st.linked; $('syncReplace').disabled = !url;
+}
+let linkMode = '';
+function openLinkDialog(mode) {
+  linkMode = mode; hideAlert('linkMsg'); $('linkForm').reset();
+  $('linkTitle').textContent = mode === 'boot' ? 'رفع بيانات هذا الجهاز إلى الخادم' : 'استبدال بيانات هذا الجهاز بنسخة الخادم';
+  $('linkNote').textContent = mode === 'boot' ? 'يعمل مرة واحدة على خادم فارغ، وبعدها تصبح بيانات الخادم هي المرجع لكل الأجهزة.' : 'تُحذف بيانات هذا الجهاز المحلية وتُستبدل ببيانات الخادم. سجّل الدخول بحساب موجود على الخادم.';
+  document.querySelectorAll('.lk-key').forEach(e => e.classList.toggle('hidden', mode !== 'boot'));
+  document.querySelectorAll('.lk-acct').forEach(e => e.classList.toggle('hidden', mode === 'boot'));
+  $('linkDialog').showModal();
+}
 function renderSettings() {
+  renderSync();
   renderDemo();
   const s = Store.settings, off = s.weekend.split(',');
   $('setStart').value = s.workStart; $('setEnd').value = s.workEnd; $('setGrace').value = s.graceMin; $('setAnnual').value = s.annualLeave; $('setExitHrs').value = s.exitMonthlyHours;
@@ -899,6 +918,7 @@ function showTab(name) {
 }
 const currentTab = () => document.querySelector('.nav-item[aria-current=page]')?.dataset.tab || 'me';
 function refresh() { RENDER[currentTab()](); renderToday(); }
+window.addEventListener('store-sync', () => { try { if (currentTab() === 'settings') renderSync(); else if (!document.querySelector('dialog[open]')) refresh(); } catch (e) { console.error(e); } });
 
 // قائمة جانبية: شريط قابل للطي على الحاسوب، ودرج منزلق على الجوال واللوحي
 function updateNavGroups() {
@@ -1019,6 +1039,21 @@ function init() {
   $('avatar').textContent = [...me.name][0];
   $('logout').onclick = () => { Store.logout(); location.replace('login.html'); };
   $('btnPw').onclick = () => openPwDialog(me);
+  if (me.role === 'admin') {
+    $('syncSaveUrl').onclick = () => { hideAlert('syncMsg'); try { Store.sync.setUrl($('syncUrl').value); renderSync(); } catch (e) { showAlert('syncMsg', e.message); } };
+    $('syncBoot').onclick = () => openLinkDialog('boot'); $('syncReplace').onclick = () => openLinkDialog('replace');
+    $('syncNow').onclick = async () => { hideAlert('syncMsg'); const r = await Store.sync.now(); if (r.error) showAlert('syncMsg', r.error); renderSync(); };
+    $('linkCancel').onclick = () => $('linkDialog').close();
+    $('linkForm').onsubmit = async e => {
+      e.preventDefault(); hideAlert('linkMsg'); $('linkGo').disabled = true;
+      try {
+        if (linkMode === 'boot') await Store.sync.bootstrap($('lk_key').value);
+        else { if (!confirm('ستُحذف بيانات هذا الجهاز المحلية وتُستبدل بنسخة الخادم. متابعة؟')) { $('linkGo').disabled = false; return; } await Store.sync.replaceFromServer($('lk_user').value, $('lk_pass').value); location.replace('login.html'); return; }
+        $('linkDialog').close(); renderSync();
+      } catch (err) { showAlert('linkMsg', err.message); }
+      $('linkGo').disabled = false;
+    };
+  }
   $('btnIn').onclick = () => act((id, loc) => Store.checkIn(id, loc));
   $('btnOut').onclick = () => act((id, loc) => Store.checkOut(id, loc));
   $('mapClose').onclick = () => $('mapDialog').close();
