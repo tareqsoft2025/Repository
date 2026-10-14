@@ -1,5 +1,5 @@
 -- Optional manual schema setup; index.php also creates these tables.
-CREATE TABLE IF NOT EXISTS rows (
+CREATE TABLE IF NOT EXISTS `rows` (
   tbl VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   id VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   data LONGTEXT NULL,
