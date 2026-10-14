@@ -1,3 +1,4 @@
 android/build/
 app/*.idsig
 server/data/
+server-php/config.php
