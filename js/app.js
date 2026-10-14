@@ -794,6 +794,25 @@ function renderSync() {
     : !st.linked ? 'عنوان الخادم مضبوط لكن هذا الجهاز غير مرتبط به بعد.'
     : `مرتبط بالخادم — آخر مزامنة: ${when} — تعديلات بانتظار الإرسال: ${st.pending}${st.error ? ' — ' + st.error : ''}`;
   $('syncBoot').disabled = !url || !!st.linked || me.role !== 'admin'; $('syncNow').disabled = !st.linked; $('syncReplace').disabled = !url;
+  if (url) Store.sync.health().then(h => { $('syncStatus').textContent += ` — حالة الخادم: ${h.initialized ? 'مهيّأ وفيه بيانات' : 'فارغ (لم تُرفع بيانات بعد)'}`; }).catch(e => { $('syncStatus').textContent += ' — تعذّر الاتصال بالخادم: ' + e.message; });
+  updateSyncBanner();
+}
+// شريط تنبيه أعلى الصفحة عندما يكون الخادم مضبوطاً ولم يُربط هذا الجهاز به
+async function updateSyncBanner() {
+  let bar = $('syncBanner');
+  if (!bar) { bar = document.createElement('div'); bar.id = 'syncBanner'; bar.className = 'sync-banner hidden'; document.querySelector('main').prepend(bar); }
+  const st = Store.sync.state;
+  if (!Store.sync.url || st.linked) { bar.classList.add('hidden'); return; }
+  let msg = '', goto = false;
+  try {
+    const h = await Store.sync.health();
+    if (!h.initialized) msg = me.role === 'admin' ? 'الخادم المركزي فارغ: هذا الجهاز غير مرتبط به، فلا تظهر بياناتك على الأجهزة الأخرى. ارفع بيانات هذا الجهاز من «الإعدادات ← الخادم المركزي».' : 'الخادم المركزي لم يُهيَّأ بعد. اطلب من المدير رفع البيانات من الإعدادات.';
+    else msg = 'الخادم المركزي يحتوي بيانات، لكن هذا الجهاز غير مرتبط به فتُعرض بيانات محلية فقط. ' + (me.role === 'admin' ? 'من «الإعدادات ← الخادم المركزي» اختر «استبدال بيانات الجهاز بنسخة الخادم».' : 'اخرج ثم سجّل الدخول من جديد.');
+    goto = me.role === 'admin';
+  } catch (e) { msg = 'تعذّر الاتصال بالخادم المركزي: ' + e.message; }
+  bar.replaceChildren(); const sp = document.createElement('span'); sp.textContent = msg; bar.appendChild(sp);
+  if (goto) { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn sm'; b.textContent = 'فتح الإعدادات'; b.onclick = () => showTab('settings'); bar.appendChild(b); }
+  bar.classList.remove('hidden');
 }
 let linkMode = '';
 function openLinkDialog(mode) {
@@ -918,7 +937,7 @@ function showTab(name) {
 }
 const currentTab = () => document.querySelector('.nav-item[aria-current=page]')?.dataset.tab || 'me';
 function refresh() { RENDER[currentTab()](); renderToday(); }
-window.addEventListener('store-sync', () => { try { if (currentTab() === 'settings') renderSync(); else if (!document.querySelector('dialog[open]')) refresh(); } catch (e) { console.error(e); } });
+window.addEventListener('store-sync', () => { try { updateSyncBanner(); if (currentTab() === 'settings') renderSync(); else if (!document.querySelector('dialog[open]')) refresh(); } catch (e) { console.error(e); } });
 
 // قائمة جانبية: شريط قابل للطي على الحاسوب، ودرج منزلق على الجوال واللوحي
 function updateNavGroups() {
@@ -1039,6 +1058,7 @@ function init() {
   $('avatar').textContent = [...me.name][0];
   $('logout').onclick = () => { Store.logout(); location.replace('login.html'); };
   $('btnPw').onclick = () => openPwDialog(me);
+  updateSyncBanner();
   if (me.role === 'admin') {
     $('syncSaveUrl').onclick = () => { hideAlert('syncMsg'); try { Store.sync.setUrl($('syncUrl').value); renderSync(); } catch (e) { showAlert('syncMsg', e.message); } };
     $('syncBoot').onclick = () => openLinkDialog('boot'); $('syncReplace').onclick = () => openLinkDialog('replace');
