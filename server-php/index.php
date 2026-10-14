@@ -1,13 +1,12 @@
 <?php
 // خادم المزامنة المركزي (نسخة PHP) لنظام شؤون الموظفين وتطبيق بصمة.
 // يعمل على أي استضافة PHP 7.4+ مع SQLite (pdo_sqlite). نفس واجهة نسخة Node تماماً.
-declare(strict_types=1);
 mb_internal_encoding('UTF-8');
 
 // ---------- الإعدادات ----------
 $cfgFile = __DIR__ . '/config.php';
 $SETUP_KEY = '';
-if (is_file($cfgFile)) require $cfgFile;                      // define('HR_SETUP_KEY', '...'); define('HR_DATA_DIR', '/مسار/خارج/public_html');
+if (is_file($cfgFile)) require_once $cfgFile;                      // define('HR_SETUP_KEY', '...'); define('HR_DATA_DIR', '/مسار/خارج/public_html');
 if (defined('HR_SETUP_KEY')) $SETUP_KEY = HR_SETUP_KEY;
 
 header('Access-Control-Allow-Origin: *');
@@ -15,7 +14,7 @@ header('Access-Control-Allow-Headers: authorization, content-type');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Cache-Control: no-store');
 
-function out($code, $obj) { http_response_code($code); header('Content-Type: application/json; charset=utf-8'); echo json_encode($obj, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_INVALID_UTF8_SUBSTITUTE); exit; }
+function out($code, $obj) { http_response_code($code); header('Content-Type: application/json; charset=utf-8'); echo json_encode($obj, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION); if ($code >= 400) echo str_repeat(' ', 600); /* يظهر نص الخطأ في المتصفحات التي تخفي الأخطاء القصيرة */ exit; }
 function bad($code, $msg) { out($code, ['error' => $msg]); }
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { http_response_code(204); exit; }
 
@@ -68,7 +67,7 @@ function tx($fn) { global $db; $db->exec('BEGIN IMMEDIATE'); try { $r = $fn(); $
 function verifyPw($pw, $stored) {
   if (!is_string($stored) || $stored === '') return false;
   if (strpos($stored, 'pbkdf2$') !== 0) return hash_equals($stored, $pw);
-  [, $it, $salt, $hash] = array_pad(explode('$', $stored), 4, '');
+  list(, $it, $salt, $hash) = array_pad(explode('$', $stored), 4, '');
   $h = base64_encode(hash_pbkdf2('sha256', $pw, base64_decode($salt), (int)$it, 32, true));
   return hash_equals($hash, $h);
 }
@@ -193,9 +192,9 @@ if ($path === '/api/sync/push' && $method === 'POST') {
 function eligibility($u, $emp, $date) {
   if (!$emp) return isAdmin($u) ? ['ok' => true, 'exempt' => true] : ['ok' => false, 'reason' => 'حسابك غير مرتبط بملف موظف'];
   if (($emp['status'] ?? '') === 'terminated') return ['ok' => false, 'reason' => 'انتهت خدمتك'];
-  $cs = array_values(array_filter(allRows('contracts'), fn($c) => ($c['employee_id'] ?? null) === $emp['id'] && ($c['status'] ?? '') === 'active'));
+  $cs = array_values(array_filter(allRows('contracts'), function ($c) use ($emp) { return ($c['employee_id'] ?? null) === $emp['id'] && ($c['status'] ?? '') === 'active'; }));
   foreach ($cs as $c) if ($c['start_date'] <= $date && (($c['end_date'] ?? null) ?: '9999-12-31') >= $date) return ['ok' => true, 'contractNo' => $c['contract_no'], 'contractEnd' => $c['end_date'] ?? null];
-  $next = array_values(array_filter($cs, fn($c) => $c['start_date'] > $date)); usort($next, fn($a, $b) => strcmp($a['start_date'], $b['start_date']));
+  $next = array_values(array_filter($cs, function ($c) use ($date) { return $c['start_date'] > $date; })); usort($next, function ($a, $b) { return strcmp($a['start_date'], $b['start_date']); });
   if ($next) return ['ok' => false, 'reason' => 'يبدأ عقدك في ' . $next[0]['start_date']];
   return ['ok' => false, 'reason' => $cs ? 'انتهى عقدك' : 'لا يوجد عقد ساري لك. تواصل مع الموارد البشرية'];
 }
@@ -208,8 +207,8 @@ if ($path === '/api/m/me' && $method === 'GET') {
   $u = actorOf(); $emp = null; foreach (allRows('employees') as $e) if (($e['user_id'] ?? null) === $u['id']) $emp = $e;
   $date = $_GET['date'] ?? ''; $today = dateOk($date) ? $date : gmdate('Y-m-d');
   $fromKey = gmdate('Y-m-d', strtotime($today . ' -45 days')); $c = cfgOf();
-  $recs = array_values(array_filter(allRows('records'), fn($r) => $r['user_id'] === $u['id'] && $r['date'] >= $fromKey));
-  usort($recs, fn($a, $b) => strcmp($b['date'], $a['date']));
+  $recs = array_values(array_filter(allRows('records'), function ($r) use ($u, $fromKey) { return $r['user_id'] === $u['id'] && $r['date'] >= $fromKey; }));
+  usort($recs, function ($a, $b) { return strcmp($b['date'], $a['date']); });
   out(200, ['user' => publicUser($u), 'employee' => $emp ? ['name' => $emp['name'], 'empNo' => $emp['emp_no'] ?? null, 'jobTitle' => $emp['job_title'] ?? null, 'department' => $emp['department'] ?? null] : null,
     'eligibility' => $u['must_change'] ? ['ok' => false, 'reason' => 'غيّر كلمة المرور المؤقتة أولاً'] : eligibility($u, $emp, $today),
     'settings' => ['workStart' => $c['workStart'] ?? '09:00', 'workEnd' => $c['workEnd'] ?? '17:00', 'graceMin' => (int)($c['graceMin'] ?? 0), 'weekend' => $c['weekend'] ?? '5,6', 'orgName' => $c['orgName'] ?? ''],

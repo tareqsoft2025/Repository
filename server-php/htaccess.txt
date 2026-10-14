@@ -1,0 +1,6 @@
+# توجيه /api/* إلى index.php وتمرير ترويسة Authorization
+RewriteEngine On
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^api/(.*)$ index.php?route=$1 [QSA,L]
